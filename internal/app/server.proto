@@ -4,6 +4,7 @@ option go_package = "internal/app/protobuf";
 
 service Agent {
     rpc CollectTiDB (stream CPUTimeRequestTiDB) returns (stream Empty) {}
+    rpc CollectTiKV (stream CPUTimeRequestTiDB) returns (stream Empty) {}
 }
 
 message Empty {}

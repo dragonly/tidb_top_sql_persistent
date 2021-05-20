@@ -33,26 +33,13 @@ func SendRequest() {
 	}
 	defer conn.Close()
 	c := pb.NewAgentClient(conn)
-	req := pb.CPUTimeRequestTiDB{
-		Timestamp:     []uint64{1},
-		CpuTime:       []uint32{100},
-		SqlNormalized: "select ? from t1",
-	}
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
 	stream, err := c.CollectTiDB(ctx)
 	if err != nil {
 		log.Fatalf("open stream failed: %v", err)
 	}
-	for i := 0; i < 10; i++ {
-		req.Timestamp[0] += 1
-		if err := stream.Send(&req); err != nil {
-			log.Fatalf("send stream request failed: %v", err)
-		}
-		resp, err := stream.Recv()
-		if err != nil {
-			log.Fatalf("receive stream response failed: %v", err)
-		}
-		log.Printf("received stream response: %v", resp)
-	}
+
+	tidbSender := NewTiDBSender(stream)
+	tidbSender.Start()
 }

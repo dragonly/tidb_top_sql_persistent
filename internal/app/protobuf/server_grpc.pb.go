@@ -19,6 +19,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentClient interface {
 	CollectTiDB(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiDBClient, error)
+	CollectTiKV(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiKVClient, error)
 }
 
 type agentClient struct {
@@ -60,11 +61,43 @@ func (x *agentCollectTiDBClient) Recv() (*Empty, error) {
 	return m, nil
 }
 
+func (c *agentClient) CollectTiKV(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiKVClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Agent_ServiceDesc.Streams[1], "/Agent/CollectTiKV", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &agentCollectTiKVClient{stream}
+	return x, nil
+}
+
+type Agent_CollectTiKVClient interface {
+	Send(*CPUTimeRequestTiDB) error
+	Recv() (*Empty, error)
+	grpc.ClientStream
+}
+
+type agentCollectTiKVClient struct {
+	grpc.ClientStream
+}
+
+func (x *agentCollectTiKVClient) Send(m *CPUTimeRequestTiDB) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *agentCollectTiKVClient) Recv() (*Empty, error) {
+	m := new(Empty)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // AgentServer is the server API for Agent service.
 // All implementations must embed UnimplementedAgentServer
 // for forward compatibility
 type AgentServer interface {
 	CollectTiDB(Agent_CollectTiDBServer) error
+	CollectTiKV(Agent_CollectTiKVServer) error
 	mustEmbedUnimplementedAgentServer()
 }
 
@@ -74,6 +107,9 @@ type UnimplementedAgentServer struct {
 
 func (UnimplementedAgentServer) CollectTiDB(Agent_CollectTiDBServer) error {
 	return status.Errorf(codes.Unimplemented, "method CollectTiDB not implemented")
+}
+func (UnimplementedAgentServer) CollectTiKV(Agent_CollectTiKVServer) error {
+	return status.Errorf(codes.Unimplemented, "method CollectTiKV not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 
@@ -114,6 +150,32 @@ func (x *agentCollectTiDBServer) Recv() (*CPUTimeRequestTiDB, error) {
 	return m, nil
 }
 
+func _Agent_CollectTiKV_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServer).CollectTiKV(&agentCollectTiKVServer{stream})
+}
+
+type Agent_CollectTiKVServer interface {
+	Send(*Empty) error
+	Recv() (*CPUTimeRequestTiDB, error)
+	grpc.ServerStream
+}
+
+type agentCollectTiKVServer struct {
+	grpc.ServerStream
+}
+
+func (x *agentCollectTiKVServer) Send(m *Empty) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *agentCollectTiKVServer) Recv() (*CPUTimeRequestTiDB, error) {
+	m := new(CPUTimeRequestTiDB)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -125,6 +187,12 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "CollectTiDB",
 			Handler:       _Agent_CollectTiDB_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "CollectTiKV",
+			Handler:       _Agent_CollectTiKV_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
