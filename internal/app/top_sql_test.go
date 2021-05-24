@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"strconv"
 	"testing"
-	"time"
 )
 
 func testPlanBinaryDecoderFunc(_ string) (string, error) {
@@ -28,18 +27,17 @@ func testPlanBinaryDecoderFunc(_ string) (string, error) {
 }
 
 func TestTopSQL_RegisterNormalizedSQL(t *testing.T) {
-	assert := assert.New(t)
-	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, 1000)
-	assert.NoError(err, "NewTopSQL should not return error")
+	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, 100)
+	assert.NoError(t, err, "NewTopSQL should not return error")
 
 	for i := 0; i < 100; i++ {
 		key := "digest" + strconv.Itoa(i)
 		value := "normalized" + strconv.Itoa(i)
 		ts.RegisterNormalizedSQL(key, value)
-		time.Sleep(10 * time.Millisecond)
-		value1, found := ts.normalizedSQLCache.Get(key)
-		assert.Equal(true, found, "expect cache to get key '%s'", key)
-		assert.Equal(value1, value, "expect cache['%s']='$s'", key, value)
+		//time.Sleep(10 * time.Millisecond)
+		value1, err := ts.normalizedSQLCache.Get(key)
+		assert.NoError(t, err, "expect cache to get key '%s'", key)
+		assert.Equal(t, value1, value, "expect cache['%s']='$s'", key, value)
 	}
 	for i := 0; i < 100; i++ {
 		key := "digest" + strconv.Itoa(i)

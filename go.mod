@@ -3,7 +3,7 @@ module github.com/dragonly/tidb_top_sql_persistent
 go 1.16
 
 require (
-	github.com/dgraph-io/ristretto v0.0.4-0.20210521183725-9d4946d9b973
+	github.com/bluele/gcache v0.0.2
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/magiconair/properties v1.8.5 // indirect
 	github.com/mitchellh/go-homedir v1.1.0

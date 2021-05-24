@@ -16,7 +16,9 @@ limitations under the License.
 
 package app
 
-import "github.com/dgraph-io/ristretto"
+import (
+	"github.com/bluele/gcache"
+)
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
 //
@@ -34,8 +36,8 @@ type planBinaryDecoderFunc func(string) (string, error)
 type TopSQL struct {
 	// calling this can take a while, so should not block critical paths
 	planBinaryDecoder   planBinaryDecoderFunc
-	normalizedSQLCache  *ristretto.Cache
-	normalizedPlanCache *ristretto.Cache
+	normalizedSQLCache  gcache.Cache
+	normalizedPlanCache gcache.Cache
 }
 
 // NewTopSQL creates a new TopSQL struct
@@ -44,24 +46,10 @@ type TopSQL struct {
 // maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewTopSQL(
 	planBinaryDecoder planBinaryDecoderFunc,
-	maxSQLNum int64,
+	maxSQLNum int,
 ) (*TopSQL, error) {
-	normalizedSQLCache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: maxSQLNum * 10,
-		MaxCost: maxSQLNum,
-		BufferItems: 64,
-	})
-	if err != nil {
-		return nil, err
-	}
-	normalizedPlanCache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: maxSQLNum * 10,
-		MaxCost: maxSQLNum,
-		BufferItems: 64,
-	})
-	if err != nil {
-		return nil, err
-	}
+	normalizedSQLCache := gcache.New(maxSQLNum).LFU().Build()
+	normalizedPlanCache := gcache.New(maxSQLNum).LFU().Build()
 	return &TopSQL{
 		planBinaryDecoder:   planBinaryDecoder,
 		normalizedSQLCache:  normalizedSQLCache,
@@ -83,7 +71,7 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
-	ts.normalizedSQLCache.Set(sqlDigest, sqlNormalized, 1)
+	ts.normalizedSQLCache.Set(sqlDigest, sqlNormalized)
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
