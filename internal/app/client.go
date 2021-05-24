@@ -18,15 +18,17 @@ package app
 
 import (
 	"context"
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
-	"google.golang.org/grpc"
 	"log"
 	"time"
+
+	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
+	"google.golang.org/grpc"
 )
 
 func SendRequest() {
 	addr := "localhost:23333"
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("connecting server failed: %v", err)

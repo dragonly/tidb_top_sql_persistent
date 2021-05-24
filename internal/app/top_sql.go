@@ -16,6 +16,8 @@ limitations under the License.
 
 package app
 
+import "github.com/dgraph-io/ristretto"
+
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
 //
 // PlanDigest can be empty, because:
@@ -31,23 +33,40 @@ type planBinaryDecoderFunc func(string) (string, error)
 
 type TopSQL struct {
 	// calling this can take a while, so should not block critical paths
-	planBinaryDecoder planBinaryDecoderFunc
-	// max memory usage for normalized SQL in bytes
-	normalizedSQLCapacity uint32
-	// max memory usage for normalized plan in bytes
-	normalizedPlanCapacity uint32
+	planBinaryDecoder   planBinaryDecoderFunc
+	normalizedSQLCache  *ristretto.Cache
+	normalizedPlanCache *ristretto.Cache
 }
 
+// NewTopSQL creates a new TopSQL struct
+//
+// planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
+// maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewTopSQL(
 	planBinaryDecoder planBinaryDecoderFunc,
-	normalizedSQLCapacity uint32,
-	normalizedPlanCapacity uint32,
-) *TopSQL {
-	return &TopSQL{
-		planBinaryDecoder:      planBinaryDecoder,
-		normalizedSQLCapacity:  normalizedSQLCapacity,
-		normalizedPlanCapacity: normalizedPlanCapacity,
+	maxSQLNum int64,
+) (*TopSQL, error) {
+	normalizedSQLCache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: maxSQLNum * 10,
+		MaxCost: maxSQLNum,
+		BufferItems: 64,
+	})
+	if err != nil {
+		return nil, err
 	}
+	normalizedPlanCache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: maxSQLNum * 10,
+		MaxCost: maxSQLNum,
+		BufferItems: 64,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &TopSQL{
+		planBinaryDecoder:   planBinaryDecoder,
+		normalizedSQLCache:  normalizedSQLCache,
+		normalizedPlanCache: normalizedPlanCache,
+	}, nil
 }
 
 // Collect collects a batch of cpu time records at timestamp.
@@ -64,7 +83,7 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
-	// TODO
+	ts.normalizedSQLCache.Set(sqlDigest, sqlNormalized, 1)
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
