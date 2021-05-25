@@ -17,6 +17,9 @@ limitations under the License.
 package app
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/bluele/gcache"
 )
 
@@ -31,29 +34,94 @@ type TopSQLRecord struct {
 	CPUTimeMs  uint32
 }
 
-type planBinaryDecoderFunc func(string) (string, error)
+type planBinaryDecodeFunc func(string) (string, error)
+type digestMap map[string]string
+
+// TopSQLCacheEntry represents the cumulative SQL plan CPU time in current minute window
+type TopSQLCacheEntry struct {
+	CPUTimeMsList []uint32
+	TimestampList []uint64
+}
+
+func encodeCacheKey(sqlDigest, planDigest string) string {
+	return sqlDigest + "-" + planDigest
+}
+
+func decodeCacheKey(key string) (string, string) {
+	split := strings.Split(key, "-")
+	sqlDigest := split[0]
+	PlanDigest := split[1]
+	return sqlDigest, PlanDigest
+}
+
+// topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
+// the closure variables are normalizedSQLMap and normalizedPlanMap
+func topSQLEvictFuncGenerator(normalizedSQLMap digestMap, normalizedPlanMap digestMap) gcache.EvictedFunc {
+	topSQLEvictFunc := func(key interface{}, value interface{}) {
+		keyStr, ok := key.(string)
+		if !ok {
+			fmt.Printf("failed to convert key [%v] to string", key)
+			return
+		}
+		sqlDigest, planDigest := decodeCacheKey(keyStr)
+		delete(normalizedSQLMap, sqlDigest)
+		delete(normalizedPlanMap, planDigest)
+	}
+	return topSQLEvictFunc
+}
+
+type planRegisterJob struct {
+	planDigest     string
+	planNormalized string
+}
 
 type TopSQL struct {
-	// calling this can take a while, so should not block critical paths
-	planBinaryDecoder   planBinaryDecoderFunc
-	normalizedSQLCache  gcache.Cache
-	normalizedPlanCache gcache.Cache
+	// // calling this can take a while, so should not block critical paths
+	// planBinaryDecoder planBinaryDecodeFunc
+
+	// topSQLCache is an LFU cache, which stores top sql records in the next minute from the last send point
+	topSQLCache gcache.Cache
+
+	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
+	normalizedSQLMap digestMap
+
+	// normalizedPlanMap is a plan version of normalizedSQLMap
+	// this should only be set from the dedicated worker
+	normalizedPlanMap digestMap
+
+	planRegisterChan chan *planRegisterJob
+
+	// current tidb-server instance ID
+	instanceID string
 }
 
 // NewTopSQL creates a new TopSQL struct
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
+// TODO: grpc stream
 func NewTopSQL(
-	planBinaryDecoder planBinaryDecoderFunc,
+	planBinaryDecoder planBinaryDecodeFunc,
 	maxSQLNum int,
+	instanceID string,
 ) (*TopSQL, error) {
-	normalizedSQLCache := gcache.New(maxSQLNum).LFU().Build()
-	normalizedPlanCache := gcache.New(maxSQLNum).LFU().Build()
+	normalizedSQLMap := make(digestMap)
+	normalizedPlanMap := make(digestMap)
+	planRegisterChan := make(chan *planRegisterJob, 10)
+	topSQLCache := gcache.
+		New(maxSQLNum).
+		EvictedFunc(topSQLEvictFuncGenerator(normalizedSQLMap, normalizedPlanMap)).
+		LFU().
+		Build()
+
+	go registerNormalizedPlanWorker(normalizedPlanMap, planBinaryDecoder, planRegisterChan)
+
 	return &TopSQL{
-		planBinaryDecoder:   planBinaryDecoder,
-		normalizedSQLCache:  normalizedSQLCache,
-		normalizedPlanCache: normalizedPlanCache,
+		topSQLCache:       topSQLCache,
+		normalizedSQLMap:  normalizedSQLMap,
+		normalizedPlanMap: normalizedPlanMap,
+		planRegisterChan:  planRegisterChan,
+		instanceID:        instanceID,
 	}, nil
 }
 
@@ -61,8 +129,29 @@ func NewTopSQL(
 // timestamp is the unix timestamp in second.
 //
 // This function is expected to return immediately in a non-blocking behavior.
+// TODO: benchmark test concurrent performance
 func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
-	// TODO
+	for _, record := range records {
+		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
+		value, err := ts.topSQLCache.Get(encodedKey)
+		if err != nil {
+			// gcache.KeyNotFoundError, we should add a new entry for this SQL plan
+			entry := &TopSQLCacheEntry{
+				CPUTimeMsList: []uint32{record.CPUTimeMs},
+				TimestampList: []uint64{timestamp},
+			}
+			// When gcache.Cache.serializeFunc is nil, we don't need to check error from `Set()`
+			_ = ts.topSQLCache.Set(encodedKey, entry)
+			// We need to increment frequency by calling `Get()`
+			ts.topSQLCache.Get(encodedKey)
+		} else {
+			// SQL plan entry exists, we should update it's CPU time and timestamp list
+			// Note that the entry's frequency is already incremented by the former `Get()` call
+			entry, _ := value.(TopSQLCacheEntry)
+			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
+			entry.TimestampList = append(entry.TimestampList, timestamp)
+		}
+	}
 }
 
 // RegisterNormalizedSQL registers a normalized sql string to a sql digest, while the former can be of >1M long.
@@ -70,11 +159,33 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 //
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
+// TODO: benchmark test concurrent performance
 func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
-	ts.normalizedSQLCache.Set(sqlDigest, sqlNormalized)
+	if _, exist := ts.normalizedSQLMap[sqlDigest]; !exist {
+		ts.normalizedSQLMap[sqlDigest] = sqlNormalized
+	}
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
-func (ts *TopSQL) RegisterNormalizedPlan(planDigest string, planNormalized []byte) {
-	// TODO
+// TODO: benchmark test concurrent performance
+func (ts *TopSQL) RegisterNormalizedPlan(planDigest string, planNormalized string) {
+	if _, exist := ts.normalizedPlanMap[planDigest]; !exist {
+		ts.planRegisterChan <- &planRegisterJob{
+			planDigest:     planDigest,
+			planNormalized: planNormalized,
+		}
+	}
+}
+
+// this should be the only place where the normalizedPlanMap is set
+func registerNormalizedPlanWorker(normalizedPlanMap digestMap, planDecoder planBinaryDecodeFunc, jobChan chan *planRegisterJob) {
+	for {
+		job := <-jobChan
+		planDecoded, err := planDecoder(job.planNormalized)
+		if err != nil {
+			fmt.Printf("decode plan failed: %v\n", err)
+			continue
+		}
+		normalizedPlanMap[job.planDigest] = planDecoded
+	}
 }

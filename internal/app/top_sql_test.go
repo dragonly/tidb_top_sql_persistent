@@ -17,30 +17,46 @@ limitations under the License.
 package app
 
 import (
-	"github.com/stretchr/testify/assert"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func testPlanBinaryDecoderFunc(_ string) (string, error) {
-	return "", nil
+func testPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
 }
 
-func TestTopSQL_RegisterNormalizedSQL(t *testing.T) {
-	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, 100)
+func TestTopSQL_Collect(t *testing.T) {
+	maxSQLNum := 10
+	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	assert.NoError(t, err, "NewTopSQL should not return error")
 
-	for i := 0; i < 100; i++ {
-		key := "digest" + strconv.Itoa(i)
-		value := "normalized" + strconv.Itoa(i)
+	// register normalized sql
+	for i := 0; i < maxSQLNum; i++ {
+		key := "sqlDigest" + strconv.Itoa(i)
+		value := "sqlNormalized" + strconv.Itoa(i)
 		ts.RegisterNormalizedSQL(key, value)
-		//time.Sleep(10 * time.Millisecond)
-		value1, err := ts.normalizedSQLCache.Get(key)
-		assert.NoError(t, err, "expect cache to get key '%s'", key)
-		assert.Equal(t, value1, value, "expect cache['%s']='$s'", key, value)
 	}
-	for i := 0; i < 100; i++ {
-		key := "digest" + strconv.Itoa(i)
-		t.Log(ts.normalizedSQLCache.Get(key))
+	// register normalized plan
+	for i := 0; i < maxSQLNum; i++ {
+		key := "planDigest" + strconv.Itoa(i)
+		value := "planNormalized" + strconv.Itoa(i)
+		ts.RegisterNormalizedPlan(key, value)
+	}
+	// collect
+	var records []TopSQLRecord
+	for i := 0; i < maxSQLNum; i++ {
+		records = append(records, TopSQLRecord{
+			SQLDigest:  "sqlDigest" + strconv.Itoa(i),
+			PlanDigest: "planDigest" + strconv.Itoa(i),
+			CPUTimeMs:  uint32(i),
+		})
+	}
+	ts.Collect(1, records)
+	for i := 0; i < maxSQLNum; i++ {
+		sqlDigest := "sqlDigest" + strconv.Itoa(i)
+		planDigest := "planDigest" + strconv.Itoa(i)
+		key := encodeCacheKey(sqlDigest, planDigest)
 	}
 }
