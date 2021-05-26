@@ -19,8 +19,6 @@ package app
 import (
 	"fmt"
 	"strings"
-
-	"github.com/bluele/gcache"
 )
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -56,7 +54,7 @@ func decodeCacheKey(key string) (string, string) {
 
 // topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
 // the closure variables are normalizedSQLMap and normalizedPlanMap
-func topSQLEvictFuncGenerator(normalizedSQLMap digestMap, normalizedPlanMap digestMap) gcache.EvictedFunc {
+func topSQLEvictFuncGenerator(normalizedSQLMap digestMap, normalizedPlanMap digestMap) EvictedHookFunc {
 	topSQLEvictFunc := func(key interface{}, value interface{}) {
 		keyStr, ok := key.(string)
 		if !ok {
@@ -80,7 +78,7 @@ type TopSQL struct {
 	// planBinaryDecoder planBinaryDecodeFunc
 
 	// topSQLCache is an LFU cache, which stores top sql records in the next minute from the last send point
-	topSQLCache gcache.Cache
+	topSQLCache *LFUCache
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap digestMap
@@ -108,11 +106,7 @@ func NewTopSQL(
 	normalizedSQLMap := make(digestMap)
 	normalizedPlanMap := make(digestMap)
 	planRegisterChan := make(chan *planRegisterJob, 10)
-	topSQLCache := gcache.
-		New(maxSQLNum).
-		EvictedFunc(topSQLEvictFuncGenerator(normalizedSQLMap, normalizedPlanMap)).
-		LFU().
-		Build()
+	topSQLCache := NewLFUCache(maxSQLNum, topSQLEvictFuncGenerator(normalizedSQLMap, normalizedPlanMap))
 
 	go registerNormalizedPlanWorker(normalizedPlanMap, planBinaryDecoder, planRegisterChan)
 
@@ -130,18 +124,19 @@ func NewTopSQL(
 //
 // This function is expected to return immediately in a non-blocking behavior.
 // TODO: benchmark test concurrent performance
+// TODO: use cpu time as frequency
 func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
-		value, err := ts.topSQLCache.Get(encodedKey)
-		if err != nil {
-			// gcache.KeyNotFoundError, we should add a new entry for this SQL plan
+		value := ts.topSQLCache.Get(encodedKey)
+		if value == nil {
+			// not found, we should add a new entry for this SQL plan
 			entry := &TopSQLCacheEntry{
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
 			// When gcache.Cache.serializeFunc is nil, we don't need to check error from `Set()`
-			_ = ts.topSQLCache.Set(encodedKey, entry)
+			ts.topSQLCache.Set(encodedKey, entry)
 			// We need to increment frequency by calling `Get()`
 			ts.topSQLCache.Get(encodedKey)
 		} else {
