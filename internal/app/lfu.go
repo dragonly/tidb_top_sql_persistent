@@ -21,27 +21,40 @@ import (
 	"sync"
 )
 
-type EvictedHookFunc func(interface{}, interface{})
+type (
+	LFUCacheKey           interface{}
+	LFUCacheValue         interface{}
+	EvictedHookFunc       func(LFUCacheKey, LFUCacheValue)
+	FrequencyEvaluateFunc func(LFUCacheKey, LFUCacheValue) uint64
+)
 
+// LFUCache is a cache that implements LFU eviction
+// It supports customized frequency evaluation, which means you can replace "frequency" with
+// any other number that is reasonable to your application requirements.
 type LFUCache struct {
-	mu          sync.RWMutex
-	capacity    int
-	items       map[interface{}]*lfuItem
-	freqList    *list.List
-	evictedHook EvictedHookFunc
+	mu       sync.RWMutex
+	capacity int
+	items    map[interface{}]*lfuItem
+	freqList *list.List
+	// evictedHook is triggered whenever an item is evicted from the LFU cache.
+	// This is a good point of time where you can do things when eviction happens.
+	evictedHook        EvictedHookFunc
+	frequencyEvaluator FrequencyEvaluateFunc
 }
 
 // lfuItem stores the actual key/value of the cache, which is used in `Get()/Set()` APIs
 type lfuItem struct {
-	key         interface{}
-	value       interface{}
+	key   interface{}
+	value interface{}
+	// freqElement is used to navigate in the list
+	// When you want to do things related to frequency, you should always cast it to `freqEntry`
 	freqElement *list.Element
 }
 
 // freqEntry is the internal frequency management unit, the first frequency is always 0.
 // All items in a freqEntry has the same frequency in the LFU cache.
 type freqEntry struct {
-	freq  uint
+	freq  uint64
 	items map[*lfuItem]struct{}
 }
 
@@ -100,27 +113,39 @@ func (c *LFUCache) Get(key interface{}) interface{} {
 	defer c.mu.Unlock()
 	item, ok := c.items[key]
 	if ok {
-		c.increment(item)
+		c.incrementFrequency(item, 1)
 		v := item.value
 		return v
 	}
 	return nil
 }
 
-func (c *LFUCache) increment(item *lfuItem) {
+// incrementFrequency add delta to the current frequency of the LFU key/value item
+// It should be called with mutex protect.
+func (c *LFUCache) incrementFrequency(item *lfuItem, delta uint64) {
+	if delta <= 0 {
+		return
+	}
+
 	currentFreqElement := item.freqElement
 	currentFreqEntry := currentFreqElement.Value.(*freqEntry)
-	nextFreq := currentFreqEntry.freq + 1
+
+	// remove item from the current frequency entry
 	delete(currentFreqEntry.items, item)
 
 	// a boolean whether reuse the empty current entry
-	removable := isRemovableFreqEntry(currentFreqEntry)
+	shouldRemoveCurrentFreqEntry := shouldRemoveFreqEntry(currentFreqEntry)
 
-	// insert item into a valid entry
+	// find the frequency list insert point
+	nextFreq := currentFreqEntry.freq + delta
 	nextFreqElement := currentFreqElement.Next()
-	switch {
-	case nextFreqElement == nil || nextFreqElement.Value.(*freqEntry).freq > nextFreq:
-		if removable {
+	for nextFreqElement != nil && nextFreqElement.Value.(*freqEntry).freq < nextFreq {
+		nextFreqElement = nextFreqElement.Next()
+	}
+	if nextFreqElement == nil || nextFreqElement.Value.(*freqEntry).freq > nextFreq {
+		// should insert new frequency entry to hold the item
+		if shouldRemoveCurrentFreqEntry {
+			// current frequency entry will be empty, reuse it
 			currentFreqEntry.freq = nextFreq
 			nextFreqElement = currentFreqElement
 		} else {
@@ -129,13 +154,13 @@ func (c *LFUCache) increment(item *lfuItem) {
 				items: make(map[*lfuItem]struct{}),
 			}, currentFreqElement)
 		}
-	case nextFreqElement.Value.(*freqEntry).freq == nextFreq:
-		if removable {
+	} else {
+		// add the item to the existing frequency entry
+		if shouldRemoveCurrentFreqEntry {
 			c.freqList.Remove(currentFreqElement)
 		}
-	default:
-		panic("unreachable")
 	}
+	// after all, link the item and the frequency entry
 	nextFreqElement.Value.(*freqEntry).items[item] = struct{}{}
 	item.freqElement = nextFreqElement
 }
@@ -179,12 +204,12 @@ func (c *LFUCache) Remove(key interface{}) bool {
 	return false
 }
 
-// removeElement is used to remove a given list element from the cache
+// removeItem removes an LFU key/value item from the cache
 func (c *LFUCache) removeItem(item *lfuItem) {
 	entry := item.freqElement.Value.(*freqEntry)
 	delete(c.items, item.key)
 	delete(entry.items, item)
-	if isRemovableFreqEntry(entry) {
+	if shouldRemoveFreqEntry(entry) {
 		c.freqList.Remove(item.freqElement)
 	}
 	if c.evictedHook != nil {
@@ -199,6 +224,6 @@ func (c *LFUCache) Purge() {
 	c.init()
 }
 
-func isRemovableFreqEntry(entry *freqEntry) bool {
+func shouldRemoveFreqEntry(entry *freqEntry) bool {
 	return entry.freq != 0 && len(entry.items) == 0
 }
