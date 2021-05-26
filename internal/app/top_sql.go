@@ -35,8 +35,8 @@ type TopSQLRecord struct {
 type planBinaryDecodeFunc func(string) (string, error)
 type digestMap map[string]string
 
-// TopSQLCacheEntry represents the cumulative SQL plan CPU time in current minute window
-type TopSQLCacheEntry struct {
+// TopSQLDataPoint represents the cumulative SQL plan CPU time in current minute window
+type TopSQLDataPoint struct {
 	CPUTimeMsList []uint32
 	TimestampList []uint64
 }
@@ -124,28 +124,26 @@ func NewTopSQL(
 //
 // This function is expected to return immediately in a non-blocking behavior.
 // TODO: benchmark test concurrent performance
-// TODO: use cpu time as frequency
 func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		value := ts.topSQLCache.Get(encodedKey)
 		if value == nil {
 			// not found, we should add a new entry for this SQL plan
-			entry := &TopSQLCacheEntry{
+			entry := &TopSQLDataPoint{
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
 			// When gcache.Cache.serializeFunc is nil, we don't need to check error from `Set()`
 			ts.topSQLCache.Set(encodedKey, entry)
-			// We need to increment frequency by calling `Get()`
-			ts.topSQLCache.Get(encodedKey)
 		} else {
 			// SQL plan entry exists, we should update it's CPU time and timestamp list
-			// Note that the entry's frequency is already incremented by the former `Get()` call
-			entry, _ := value.(TopSQLCacheEntry)
+			entry, _ := value.(TopSQLDataPoint)
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
 		}
+		// Finally, we should add the CPUTimeMS into the frequency of the SQL plan
+		ts.topSQLCache.IncrementFrequency(encodedKey, uint64(record.CPUTimeMs))
 	}
 }
 

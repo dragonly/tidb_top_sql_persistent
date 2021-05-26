@@ -27,8 +27,7 @@ func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func TestTopSQL_Collect(t *testing.T) {
-	maxSQLNum := 10
+func initializeCache(t *testing.T, maxSQLNum int) *TopSQL {
 	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	assert.NoError(t, err, "NewTopSQL should not return error")
 
@@ -50,13 +49,39 @@ func TestTopSQL_Collect(t *testing.T) {
 		records = append(records, TopSQLRecord{
 			SQLDigest:  "sqlDigest" + strconv.Itoa(i),
 			PlanDigest: "planDigest" + strconv.Itoa(i),
-			CPUTimeMs:  uint32(i),
+			CPUTimeMs:  uint32(i + 1),
 		})
 	}
 	ts.Collect(1, records)
+	return ts
+}
+
+func TestTopSQL_CollectAndGet(t *testing.T) {
+	maxSQLNum := 10
+	ts := initializeCache(t, maxSQLNum)
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i)
 		planDigest := "planDigest" + strconv.Itoa(i)
 		key := encodeCacheKey(sqlDigest, planDigest)
+		entry := ts.topSQLCache.Get(key).(*TopSQLDataPoint)
+		assert.Equal(t, uint32(i+1), entry.CPUTimeMsList[0])
+		assert.Equal(t, uint64(1), entry.TimestampList[0])
+	}
+}
+
+func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
+	maxSQLNum := 10
+	ts := initializeCache(t, maxSQLNum)
+	elem := ts.topSQLCache.freqList.Front()
+	for i := 0; i < maxSQLNum; i++ {
+		elem = elem.Next()
+		entry := elem.Value.(*freqEntry)
+		assert.Equal(t, uint64(i+1), entry.freq)
+		assert.Equal(t, 1, len(entry.items))
+		for item, _ := range entry.items {
+			point := item.value.(*TopSQLDataPoint)
+			assert.Equal(t, uint32(i+1), point.CPUTimeMsList[0])
+			assert.Equal(t, uint64(1), point.TimestampList[0])
+		}
 	}
 }

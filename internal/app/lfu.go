@@ -22,10 +22,8 @@ import (
 )
 
 type (
-	LFUCacheKey           interface{}
-	LFUCacheValue         interface{}
-	EvictedHookFunc       func(LFUCacheKey, LFUCacheValue)
-	FrequencyEvaluateFunc func(LFUCacheKey, LFUCacheValue) uint64
+	EvictedHookFunc       func(interface{}, interface{})
+	FrequencyEvaluateFunc func(interface{}, interface{}) uint64
 )
 
 // LFUCache is a cache that implements LFU eviction
@@ -38,8 +36,7 @@ type LFUCache struct {
 	freqList *list.List
 	// evictedHook is triggered whenever an item is evicted from the LFU cache.
 	// This is a good point of time where you can do things when eviction happens.
-	evictedHook        EvictedHookFunc
-	frequencyEvaluator FrequencyEvaluateFunc
+	evictedHook EvictedHookFunc
 }
 
 // lfuItem stores the actual key/value of the cache, which is used in `Get()/Set()` APIs
@@ -109,24 +106,28 @@ func (c *LFUCache) set(key, value interface{}) interface{} {
 }
 
 func (c *LFUCache) Get(key interface{}) interface{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	item, ok := c.items[key]
-	if ok {
-		c.incrementFrequency(item, 1)
-		v := item.value
-		return v
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if item, ok := c.items[key]; ok {
+		return item.value
 	}
 	return nil
+}
+
+func (c *LFUCache) IncrementFrequency(key interface{}, delta uint64) {
+	if delta <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if item, ok := c.items[key]; ok {
+		c.incrementFrequency(item, delta)
+	}
 }
 
 // incrementFrequency add delta to the current frequency of the LFU key/value item
 // It should be called with mutex protect.
 func (c *LFUCache) incrementFrequency(item *lfuItem, delta uint64) {
-	if delta <= 0 {
-		return
-	}
-
 	currentFreqElement := item.freqElement
 	currentFreqEntry := currentFreqElement.Value.(*freqEntry)
 
@@ -140,6 +141,7 @@ func (c *LFUCache) incrementFrequency(item *lfuItem, delta uint64) {
 	nextFreq := currentFreqEntry.freq + delta
 	nextFreqElement := currentFreqElement.Next()
 	for nextFreqElement != nil && nextFreqElement.Value.(*freqEntry).freq < nextFreq {
+		currentFreqElement = nextFreqElement
 		nextFreqElement = nextFreqElement.Next()
 	}
 	if nextFreqElement == nil || nextFreqElement.Value.(*freqEntry).freq > nextFreq {
@@ -182,15 +184,6 @@ func (c *LFUCache) evict(count int) {
 			entry = entry.Next()
 		}
 	}
-}
-
-func (c *LFUCache) Has(key interface{}) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if _, ok := c.items[key]; ok {
-		return true
-	}
-	return false
 }
 
 // Remove removes the provided key from the cache.

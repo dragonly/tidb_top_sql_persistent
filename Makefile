@@ -20,3 +20,9 @@ server:
 	@echo "generating go protobuf files"
 	protoc -I internal/app/ --go_out=. --go-grpc_out=. internal/app/server.proto
 	@echo ""
+
+test:
+	@echo "running test"
+	go test ./...
+	@echo ""
+
