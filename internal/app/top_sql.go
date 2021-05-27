@@ -19,6 +19,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -33,39 +34,11 @@ type TopSQLRecord struct {
 }
 
 type planBinaryDecodeFunc func(string) (string, error)
-type digestMap map[string]string
 
 // TopSQLDataPoint represents the cumulative SQL plan CPU time in current minute window
 type TopSQLDataPoint struct {
 	CPUTimeMsList []uint32
 	TimestampList []uint64
-}
-
-func encodeCacheKey(sqlDigest, planDigest string) string {
-	return sqlDigest + "-" + planDigest
-}
-
-func decodeCacheKey(key string) (string, string) {
-	split := strings.Split(key, "-")
-	sqlDigest := split[0]
-	PlanDigest := split[1]
-	return sqlDigest, PlanDigest
-}
-
-// topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
-// the closure variables are normalizedSQLMap and normalizedPlanMap
-func topSQLEvictFuncGenerator(normalizedSQLMap digestMap, normalizedPlanMap digestMap) EvictedHookFunc {
-	topSQLEvictFunc := func(key interface{}, value interface{}) {
-		keyStr, ok := key.(string)
-		if !ok {
-			fmt.Printf("failed to convert key [%v] to string", key)
-			return
-		}
-		sqlDigest, planDigest := decodeCacheKey(keyStr)
-		delete(normalizedSQLMap, sqlDigest)
-		delete(normalizedPlanMap, planDigest)
-	}
-	return topSQLEvictFunc
 }
 
 type planRegisterJob struct {
@@ -81,16 +54,46 @@ type TopSQL struct {
 	topSQLCache *LFUCache
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
-	normalizedSQLMap digestMap
+	normalizedSQLMap   map[string]string
+	normalizedSQLMutex sync.RWMutex
 
 	// normalizedPlanMap is a plan version of normalizedSQLMap
 	// this should only be set from the dedicated worker
-	normalizedPlanMap digestMap
+	normalizedPlanMap map[string]string
 
 	planRegisterChan chan *planRegisterJob
 
 	// current tidb-server instance ID
 	instanceID string
+}
+
+func encodeCacheKey(sqlDigest, planDigest string) string {
+	return sqlDigest + "-" + planDigest
+}
+
+func decodeCacheKey(key string) (string, string) {
+	split := strings.Split(key, "-")
+	sqlDigest := split[0]
+	PlanDigest := split[1]
+	return sqlDigest, PlanDigest
+}
+
+// topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
+// the closure variables are normalizedSQLMap and normalizedPlanMap
+func topSQLEvictFuncGenerator(normalizedSQLMutex *sync.RWMutex, normalizedSQLMap map[string]string, normalizedPlanMap map[string]string) EvictedHookFunc {
+	topSQLEvictFunc := func(key interface{}, value interface{}) {
+		keyStr, ok := key.(string)
+		if !ok {
+			fmt.Printf("failed to convert key [%v] to string", key)
+			return
+		}
+		sqlDigest, planDigest := decodeCacheKey(keyStr)
+		normalizedSQLMutex.Lock()
+		delete(normalizedSQLMap, sqlDigest)
+		normalizedSQLMutex.Unlock()
+		delete(normalizedPlanMap, planDigest)
+	}
+	return topSQLEvictFunc
 }
 
 // NewTopSQL creates a new TopSQL struct
@@ -102,21 +105,23 @@ func NewTopSQL(
 	planBinaryDecoder planBinaryDecodeFunc,
 	maxSQLNum int,
 	instanceID string,
-) (*TopSQL, error) {
-	normalizedSQLMap := make(digestMap)
-	normalizedPlanMap := make(digestMap)
+) *TopSQL {
+	normalizedSQLMap := make(map[string]string)
+	normalizedPlanMap := make(map[string]string)
 	planRegisterChan := make(chan *planRegisterJob, 10)
-	topSQLCache := NewLFUCache(maxSQLNum, topSQLEvictFuncGenerator(normalizedSQLMap, normalizedPlanMap))
+	topSQLCache := NewLFUCache(maxSQLNum)
 
 	go registerNormalizedPlanWorker(normalizedPlanMap, planBinaryDecoder, planRegisterChan)
 
-	return &TopSQL{
+	ts := &TopSQL{
 		topSQLCache:       topSQLCache,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
 		instanceID:        instanceID,
-	}, nil
+	}
+	ts.topSQLCache.EvictedHook = topSQLEvictFuncGenerator(&ts.normalizedSQLMutex, normalizedSQLMap, normalizedPlanMap)
+	return ts
 }
 
 // Collect collects a batch of cpu time records at timestamp.
@@ -154,26 +159,33 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
 func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
-	if _, exist := ts.normalizedSQLMap[sqlDigest]; !exist {
+	ts.normalizedSQLMutex.RLock()
+	_, exist := ts.normalizedSQLMap[sqlDigest]
+	ts.normalizedSQLMutex.RUnlock()
+	if !exist {
+		ts.normalizedSQLMutex.Lock()
 		ts.normalizedSQLMap[sqlDigest] = sqlNormalized
+		ts.normalizedSQLMutex.Unlock()
 	}
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
 func (ts *TopSQL) RegisterNormalizedPlan(planDigest string, planNormalized string) {
-	if _, exist := ts.normalizedPlanMap[planDigest]; !exist {
-		ts.planRegisterChan <- &planRegisterJob{
-			planDigest:     planDigest,
-			planNormalized: planNormalized,
-		}
+	ts.planRegisterChan <- &planRegisterJob{
+		planDigest:     planDigest,
+		planNormalized: planNormalized,
 	}
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func registerNormalizedPlanWorker(normalizedPlanMap digestMap, planDecoder planBinaryDecodeFunc, jobChan chan *planRegisterJob) {
+func registerNormalizedPlanWorker(normalizedPlanMap map[string]string, planDecoder planBinaryDecodeFunc, jobChan chan *planRegisterJob) {
+	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
 		job := <-jobChan
+		if _, exist := normalizedPlanMap[job.planDigest]; exist {
+			continue
+		}
 		planDecoded, err := planDecoder(job.planNormalized)
 		if err != nil {
 			fmt.Printf("decode plan failed: %v\n", err)

@@ -34,9 +34,9 @@ type LFUCache struct {
 	capacity int
 	items    map[interface{}]*lfuItem
 	freqList *list.List
-	// evictedHook is triggered whenever an item is evicted from the LFU cache.
+	// EvictedHook is triggered whenever an item is evicted from the LFU cache.
 	// This is a good point of time where you can do things when eviction happens.
-	evictedHook EvictedHookFunc
+	EvictedHook EvictedHookFunc
 }
 
 // lfuItem stores the actual key/value of the cache, which is used in `Get()/Set()` APIs
@@ -55,10 +55,9 @@ type freqEntry struct {
 	items map[*lfuItem]struct{}
 }
 
-func NewLFUCache(capacity int, evictedHook EvictedHookFunc) *LFUCache {
+func NewLFUCache(capacity int) *LFUCache {
 	c := &LFUCache{
-		capacity:    capacity,
-		evictedHook: evictedHook,
+		capacity: capacity,
 	}
 	c.init()
 	return c
@@ -205,8 +204,8 @@ func (c *LFUCache) removeItem(item *lfuItem) {
 	if shouldRemoveFreqEntry(entry) {
 		c.freqList.Remove(item.freqElement)
 	}
-	if c.evictedHook != nil {
-		c.evictedHook(item.key, item.value)
+	if c.EvictedHook != nil {
+		c.EvictedHook(item.key, item.value)
 	}
 }
 

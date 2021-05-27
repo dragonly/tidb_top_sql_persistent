@@ -23,41 +23,46 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	maxSQLNum = 10
+)
+
 func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func initializeCache(t *testing.T, maxSQLNum int) *TopSQL {
-	ts, err := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
-	assert.NoError(t, err, "NewTopSQL should not return error")
-
+func populateCache(ts *TopSQL, begin, end int, timestamp uint64) {
 	// register normalized sql
-	for i := 0; i < maxSQLNum; i++ {
+	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i)
 		value := "sqlNormalized" + strconv.Itoa(i)
 		ts.RegisterNormalizedSQL(key, value)
 	}
 	// register normalized plan
-	for i := 0; i < maxSQLNum; i++ {
+	for i := begin; i < end; i++ {
 		key := "planDigest" + strconv.Itoa(i)
 		value := "planNormalized" + strconv.Itoa(i)
 		ts.RegisterNormalizedPlan(key, value)
 	}
 	// collect
 	var records []TopSQLRecord
-	for i := 0; i < maxSQLNum; i++ {
+	for i := begin; i < end; i++ {
 		records = append(records, TopSQLRecord{
 			SQLDigest:  "sqlDigest" + strconv.Itoa(i),
 			PlanDigest: "planDigest" + strconv.Itoa(i),
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	ts.Collect(1, records)
+	ts.Collect(timestamp, records)
+}
+
+func initializeCache(t *testing.T, maxSQLNum int) *TopSQL {
+	ts := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
+	populateCache(ts, 0, maxSQLNum, 1)
 	return ts
 }
 
 func TestTopSQL_CollectAndGet(t *testing.T) {
-	maxSQLNum := 10
 	ts := initializeCache(t, maxSQLNum)
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i)
@@ -70,18 +75,47 @@ func TestTopSQL_CollectAndGet(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
-	maxSQLNum := 10
 	ts := initializeCache(t, maxSQLNum)
+	// traverse the frequency list, and check frequency/item content
 	elem := ts.topSQLCache.freqList.Front()
 	for i := 0; i < maxSQLNum; i++ {
 		elem = elem.Next()
 		entry := elem.Value.(*freqEntry)
 		assert.Equal(t, uint64(i+1), entry.freq)
 		assert.Equal(t, 1, len(entry.items))
-		for item, _ := range entry.items {
+		for item := range entry.items {
 			point := item.value.(*TopSQLDataPoint)
 			assert.Equal(t, uint32(i+1), point.CPUTimeMsList[0])
 			assert.Equal(t, uint64(1), point.TimestampList[0])
 		}
+	}
+}
+
+func TestTopSQL_CollectAndEvict(t *testing.T) {
+	ts := initializeCache(t, maxSQLNum)
+	// Collect 10 records with timestamp 2 and sql plan digest from 5 to 14.
+	// This should evict the first 5 sql plan digest, effectively 0-4
+	populateCache(ts, 5, 15, 2)
+	for i := 0; i < 5; i++ {
+		sqlDigest := "sqlDigest" + strconv.Itoa(i)
+		planDigest := "planDigest" + strconv.Itoa(i)
+		key := encodeCacheKey(sqlDigest, planDigest)
+		_, exist := ts.topSQLCache.items[key]
+		assert.Equal(t, false, exist, "cache key '%' should be evicted", key)
+		_, exist = ts.normalizedSQLMap[sqlDigest]
+		assert.Equal(t, false, exist, "normalized SQL with digest '%s' should be evicted", sqlDigest)
+		_, exist = ts.normalizedPlanMap[planDigest]
+		assert.Equal(t, false, exist, "normalized plan with digest '%s' should be evicted", planDigest)
+	}
+	// Because CPU time is populated as i+1, we should expect digest 5-9 to have CPU time 10, 12, 14, 16, 18,
+	// and digest 10-14 to have CPU time 10-14.
+	for i := 5; i < 10; i++ {
+		sqlDigest := "sqlDigest" + strconv.Itoa(i)
+		planDigest := "planDigest" + strconv.Itoa(i)
+		key := encodeCacheKey(sqlDigest, planDigest)
+		item, exist := ts.topSQLCache.items[key]
+		assert.Equal(t, true, exist, "cache key '%s' should exist", exist)
+		entry := item.freqElement.Value.(*freqEntry)
+		assert.Equal(t, uint64(i*2), entry.freq)
 	}
 }
