@@ -93,9 +93,9 @@ func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
 
 func TestTopSQL_CollectAndEvict(t *testing.T) {
 	ts := initializeCache(t, maxSQLNum)
-	// Collect 10 records with timestamp 2 and sql plan digest from 6 to 15.
-	// This should evict the first 5 sql plan digest, effectively 1-5
+	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
+	// The first maxSQLNum/2 sql plan digest should have been evicted
 	for i := 0; i < maxSQLNum/2; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
 		planDigest := "planDigest" + strconv.Itoa(i+1)
@@ -107,8 +107,9 @@ func TestTopSQL_CollectAndEvict(t *testing.T) {
 		_, exist = ts.normalizedPlanMap[planDigest]
 		assert.Equal(t, false, exist, "normalized plan with digest '%s' should be evicted", planDigest)
 	}
-	// Because CPU time is populated as i+1, we should expect digest 6-10 to have CPU time 12, 14, 16, 18, 20
-	// and digest 11-15 to have CPU time 11-15.
+	// Because CPU time is populated as i+1,
+	// we should expect digest maxSQLNum/2+1 - maxSQLNum to have CPU time maxSQLNum+2, maxSQLNum+4, ..., maxSQLNum*2
+	// and digest maxSQLNum+1 - maxSQLNum/2*3 to have CPU time maxSQLNum+1, maxSQLNum+2, ..., maxSQLNum/2*3.
 	for i := maxSQLNum / 2; i < maxSQLNum/2*3; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
 		planDigest := "planDigest" + strconv.Itoa(i+1)
