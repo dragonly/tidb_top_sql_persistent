@@ -31,7 +31,7 @@ func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func populateCache(ts *TopSQL, begin, end int, timestamp uint64) {
+func populateCache(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i+1)
@@ -56,7 +56,7 @@ func populateCache(ts *TopSQL, begin, end int, timestamp uint64) {
 	ts.Collect(timestamp, records)
 }
 
-func initializeCache(maxSQLNum int) *TopSQL {
+func initializeCache(maxSQLNum int) *TopSQLCollector {
 	ts := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	populateCache(ts, 0, maxSQLNum, 1)
 	return ts

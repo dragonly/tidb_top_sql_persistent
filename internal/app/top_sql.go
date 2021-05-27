@@ -46,7 +46,7 @@ type planRegisterJob struct {
 	planNormalized string
 }
 
-type TopSQL struct {
+type TopSQLCollector struct {
 	// // calling this can take a while, so should not block critical paths
 	// planBinaryDecoder planBinaryDecodeFunc
 
@@ -105,7 +105,7 @@ func NewTopSQL(
 	planBinaryDecoder planBinaryDecodeFunc,
 	maxSQLNum int,
 	instanceID string,
-) *TopSQL {
+) *TopSQLCollector {
 	normalizedSQLMap := make(map[string]string)
 	normalizedPlanMap := make(map[string]string)
 	planRegisterChan := make(chan *planRegisterJob, 10)
@@ -113,7 +113,7 @@ func NewTopSQL(
 
 	go registerNormalizedPlanWorker(normalizedPlanMap, planBinaryDecoder, planRegisterChan)
 
-	ts := &TopSQL{
+	ts := &TopSQLCollector{
 		topSQLCache:       topSQLCache,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
@@ -129,7 +129,7 @@ func NewTopSQL(
 //
 // This function is expected to return immediately in a non-blocking behavior.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
+func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		value := ts.topSQLCache.Get(encodedKey)
@@ -158,7 +158,7 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
+func (ts *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
 	ts.normalizedSQLMutex.RLock()
 	_, exist := ts.normalizedSQLMap[sqlDigest]
 	ts.normalizedSQLMutex.RUnlock()
@@ -171,7 +171,7 @@ func (ts *TopSQL) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) 
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQL) RegisterNormalizedPlan(planDigest string, planNormalized string) {
+func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, planNormalized string) {
 	ts.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
 		planNormalized: planNormalized,
