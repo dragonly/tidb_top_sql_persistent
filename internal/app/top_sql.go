@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/wangjohn/quickselect"
 )
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -35,10 +37,29 @@ type TopSQLRecord struct {
 
 type planBinaryDecodeFunc func(string) (string, error)
 
-// TopSQLDataPoint represents the cumulative SQL plan CPU time in current minute window
-type TopSQLDataPoint struct {
-	CPUTimeMsList []uint32
-	TimestampList []uint64
+// TopSQLDataPoints represents the cumulative SQL plan CPU time in current minute window
+type TopSQLDataPoints struct {
+	CPUTimeMsList  []uint32
+	TimestampList  []uint64
+	CPUTimeMsTotal uint64
+}
+
+type DigestAndCPUTime struct {
+	Key            string
+	CPUTimeMsTotal uint64
+}
+type DigestAndCPUTimeSlice []DigestAndCPUTime
+
+func (t DigestAndCPUTimeSlice) Len() int {
+	return len(t)
+}
+
+// We need find the kth largest value, so here should use >
+func (t DigestAndCPUTimeSlice) Less(i, j int) bool {
+	return t[i].CPUTimeMsTotal > t[j].CPUTimeMsTotal
+}
+func (t DigestAndCPUTimeSlice) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
 }
 
 type planRegisterJob struct {
@@ -52,6 +73,8 @@ type TopSQLCollector struct {
 
 	// topSQLCache is an LFU cache, which stores top sql records in the next minute from the last send point
 	topSQLCache *LFUCache
+	topSQLMap   map[string]*TopSQLDataPoints
+	maxSQLNum   int
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap   map[string]string
@@ -59,7 +82,8 @@ type TopSQLCollector struct {
 
 	// normalizedPlanMap is a plan version of normalizedSQLMap
 	// this should only be set from the dedicated worker
-	normalizedPlanMap map[string]string
+	normalizedPlanMap   map[string]string
+	normalizedPlanMutex sync.RWMutex
 
 	planRegisterChan chan *planRegisterJob
 
@@ -80,7 +104,11 @@ func decodeCacheKey(key string) (string, string) {
 
 // topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
 // the closure variables are normalizedSQLMap and normalizedPlanMap
-func topSQLEvictFuncGenerator(normalizedSQLMutex *sync.RWMutex, normalizedSQLMap map[string]string, normalizedPlanMap map[string]string) EvictedHookFunc {
+func topSQLEvictFuncGenerator(
+	normalizedSQLMutex *sync.RWMutex,
+	normalizedPlanMutex *sync.RWMutex,
+	normalizedSQLMap map[string]string,
+	normalizedPlanMap map[string]string) EvictedHookFunc {
 	topSQLEvictFunc := func(key interface{}, value interface{}) {
 		keyStr, ok := key.(string)
 		if !ok {
@@ -110,17 +138,28 @@ func NewTopSQL(
 	normalizedPlanMap := make(map[string]string)
 	planRegisterChan := make(chan *planRegisterJob, 10)
 	topSQLCache := NewLFUCache(maxSQLNum)
-
-	go registerNormalizedPlanWorker(normalizedPlanMap, planBinaryDecoder, planRegisterChan)
+	topSQLMap := make(map[string]*TopSQLDataPoints)
 
 	ts := &TopSQLCollector{
 		topSQLCache:       topSQLCache,
+		topSQLMap:         topSQLMap,
+		maxSQLNum:         maxSQLNum,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
 		instanceID:        instanceID,
 	}
-	ts.topSQLCache.EvictedHook = topSQLEvictFuncGenerator(&ts.normalizedSQLMutex, normalizedSQLMap, normalizedPlanMap)
+	go registerNormalizedPlanWorker(
+		&ts.normalizedPlanMutex,
+		normalizedPlanMap,
+		planBinaryDecoder,
+		planRegisterChan)
+	ts.topSQLCache.EvictedHook = topSQLEvictFuncGenerator(
+		&ts.normalizedSQLMutex,
+		&ts.normalizedPlanMutex,
+		normalizedSQLMap,
+		normalizedPlanMap,
+	)
 	return ts
 }
 
@@ -135,7 +174,7 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 		value := ts.topSQLCache.Get(encodedKey)
 		if value == nil {
 			// not found, we should add a new entry for this SQL plan
-			entry := &TopSQLDataPoint{
+			entry := &TopSQLDataPoints{
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
@@ -143,12 +182,61 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 			ts.topSQLCache.Set(encodedKey, entry)
 		} else {
 			// SQL plan entry exists, we should update it's CPU time and timestamp list
-			entry, _ := value.(*TopSQLDataPoint)
+			entry, _ := value.(*TopSQLDataPoints)
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
 		}
 		// Finally, we should add the CPUTimeMS into the frequency of the SQL plan
 		ts.topSQLCache.IncrementFrequency(encodedKey, uint64(record.CPUTimeMs))
+	}
+}
+
+// Collect1 uses a map to store records in every minute, and evict every minute.
+func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
+	for _, record := range records {
+		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
+		entry, exist := ts.topSQLMap[encodedKey]
+		if !exist {
+			entry = &TopSQLDataPoints{
+				CPUTimeMsList: []uint32{record.CPUTimeMs},
+				TimestampList: []uint64{timestamp},
+			}
+			ts.topSQLMap[encodedKey] = entry
+		} else {
+			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
+			entry.TimestampList = append(entry.TimestampList, timestamp)
+		}
+		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
+	}
+
+	if len(ts.topSQLMap) <= ts.maxSQLNum {
+		return
+	}
+
+	// find the max CPUTimeMsTotal that should be evicted
+	digestCPUTimeList := make([]DigestAndCPUTime, len(ts.topSQLMap))
+	{
+		i := 0
+		for key, value := range ts.topSQLMap {
+			data := DigestAndCPUTime{
+				Key:            key,
+				CPUTimeMsTotal: value.CPUTimeMsTotal,
+			}
+			digestCPUTimeList[i] = data
+			i++
+		}
+	}
+	quickselect.QuickSelect(DigestAndCPUTimeSlice(digestCPUTimeList), ts.maxSQLNum)
+	shouldEvictList := digestCPUTimeList[ts.maxSQLNum:]
+	for _, evict := range shouldEvictList {
+		delete(ts.topSQLMap, evict.Key)
+		sqlDigest, planDigest := decodeCacheKey(evict.Key)
+		ts.normalizedSQLMutex.Lock()
+		delete(ts.normalizedSQLMap, sqlDigest)
+		ts.normalizedSQLMutex.Unlock()
+		ts.normalizedPlanMutex.Lock()
+		delete(ts.normalizedPlanMap, planDigest)
+		ts.normalizedPlanMutex.Unlock()
 	}
 }
 
@@ -179,11 +267,18 @@ func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, planNormali
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func registerNormalizedPlanWorker(normalizedPlanMap map[string]string, planDecoder planBinaryDecodeFunc, jobChan chan *planRegisterJob) {
+func registerNormalizedPlanWorker(
+	normalizedPlanMutex *sync.RWMutex,
+	normalizedPlanMap map[string]string,
+	planDecoder planBinaryDecodeFunc,
+	jobChan chan *planRegisterJob) {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
 		job := <-jobChan
-		if _, exist := normalizedPlanMap[job.planDigest]; exist {
+		normalizedPlanMutex.RLock()
+		_, exist := normalizedPlanMap[job.planDigest]
+		normalizedPlanMutex.RUnlock()
+		if exist {
 			continue
 		}
 		planDecoded, err := planDecoder(job.planNormalized)
