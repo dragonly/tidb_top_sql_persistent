@@ -56,14 +56,14 @@ func populateCache(ts *TopSQL, begin, end int, timestamp uint64) {
 	ts.Collect(timestamp, records)
 }
 
-func initializeCache(t *testing.T, maxSQLNum int) *TopSQL {
+func initializeCache(maxSQLNum int) *TopSQL {
 	ts := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	populateCache(ts, 0, maxSQLNum, 1)
 	return ts
 }
 
 func TestTopSQL_CollectAndGet(t *testing.T) {
-	ts := initializeCache(t, maxSQLNum)
+	ts := initializeCache(maxSQLNum)
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
 		planDigest := "planDigest" + strconv.Itoa(i+1)
@@ -75,7 +75,7 @@ func TestTopSQL_CollectAndGet(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
-	ts := initializeCache(t, maxSQLNum)
+	ts := initializeCache(maxSQLNum)
 	// traverse the frequency list, and check frequency/item content
 	elem := ts.topSQLCache.freqList.Front()
 	for i := 0; i < maxSQLNum; i++ {
@@ -92,7 +92,7 @@ func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndEvict(t *testing.T) {
-	ts := initializeCache(t, maxSQLNum)
+	ts := initializeCache(maxSQLNum)
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
 	// The first maxSQLNum/2 sql plan digest should have been evicted
@@ -122,5 +122,23 @@ func TestTopSQL_CollectAndEvict(t *testing.T) {
 		} else {
 			assert.Equal(t, uint64(i+1), entry.freq)
 		}
+	}
+}
+
+func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
+	ts := initializeCache(maxSQLNum)
+	for i := 0; i < b.N; i++ {
+		populateCache(ts, 0, maxSQLNum, uint64(i))
+	}
+}
+
+func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
+	ts := initializeCache(maxSQLNum)
+	begin := 0
+	end := maxSQLNum
+	for i := 0; i < b.N; i++ {
+		begin += maxSQLNum
+		end += maxSQLNum
+		populateCache(ts, begin, end, uint64(i))
 	}
 }
