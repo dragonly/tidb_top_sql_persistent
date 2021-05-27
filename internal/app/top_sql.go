@@ -143,7 +143,7 @@ func (ts *TopSQL) Collect(timestamp uint64, records []TopSQLRecord) {
 			ts.topSQLCache.Set(encodedKey, entry)
 		} else {
 			// SQL plan entry exists, we should update it's CPU time and timestamp list
-			entry, _ := value.(TopSQLDataPoint)
+			entry, _ := value.(*TopSQLDataPoint)
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
 		}

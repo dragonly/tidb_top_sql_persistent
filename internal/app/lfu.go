@@ -127,43 +127,37 @@ func (c *LFUCache) IncrementFrequency(key interface{}, delta uint64) {
 // incrementFrequency add delta to the current frequency of the LFU key/value item
 // It should be called with mutex protect.
 func (c *LFUCache) incrementFrequency(item *lfuItem, delta uint64) {
-	currentFreqElement := item.freqElement
-	currentFreqEntry := currentFreqElement.Value.(*freqEntry)
+	oldFreqElement := item.freqElement
+	oldFreqEntry := oldFreqElement.Value.(*freqEntry)
 
-	// remove item from the current frequency entry
-	delete(currentFreqEntry.items, item)
-
-	// a boolean whether reuse the empty current entry
-	shouldRemoveCurrentFreqEntry := shouldRemoveFreqEntry(currentFreqEntry)
+	// remove item from the frequency entry
+	delete(oldFreqEntry.items, item)
 
 	// find the frequency list insert point
-	nextFreq := currentFreqEntry.freq + delta
-	nextFreqElement := currentFreqElement.Next()
+	nextFreq := oldFreqEntry.freq + delta
+	nextFreqElement := oldFreqElement.Next()
+	var currentFreqElement *list.Element
 	for nextFreqElement != nil && nextFreqElement.Value.(*freqEntry).freq < nextFreq {
 		currentFreqElement = nextFreqElement
 		nextFreqElement = nextFreqElement.Next()
 	}
+	// should insert new frequency entry to hold the item
 	if nextFreqElement == nil || nextFreqElement.Value.(*freqEntry).freq > nextFreq {
-		// should insert new frequency entry to hold the item
-		if shouldRemoveCurrentFreqEntry {
-			// current frequency entry will be empty, reuse it
-			currentFreqEntry.freq = nextFreq
-			nextFreqElement = currentFreqElement
-		} else {
-			nextFreqElement = c.freqList.InsertAfter(&freqEntry{
-				freq:  nextFreq,
-				items: make(map[*lfuItem]struct{}),
-			}, currentFreqElement)
+		if currentFreqElement == nil {
+			currentFreqElement = c.freqList.Back()
 		}
-	} else {
-		// add the item to the existing frequency entry
-		if shouldRemoveCurrentFreqEntry {
-			c.freqList.Remove(currentFreqElement)
-		}
+		nextFreqElement = c.freqList.InsertAfter(&freqEntry{
+			freq:  nextFreq,
+			items: make(map[*lfuItem]struct{}),
+		}, currentFreqElement)
 	}
 	// after all, link the item and the frequency entry
 	nextFreqElement.Value.(*freqEntry).items[item] = struct{}{}
 	item.freqElement = nextFreqElement
+
+	if shouldRemoveFreqEntry(oldFreqEntry) {
+		c.freqList.Remove(oldFreqElement)
+	}
 }
 
 // evict removes the least frequence item from the cache.
