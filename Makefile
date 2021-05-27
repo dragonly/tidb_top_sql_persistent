@@ -22,7 +22,11 @@ server:
 	@echo ""
 
 test:
-	@echo "running test"
-	go test ./...
+	@echo "running unit test"
+	go test -v ./...
 	@echo ""
 
+bench:
+	@echo "running benchmark test"
+	go test -benchmem -bench=".*" ./...
+	@echo ""
