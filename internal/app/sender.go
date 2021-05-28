@@ -17,8 +17,9 @@ limitations under the License.
 package app
 
 import (
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
 	"log"
+
+	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
 )
 
 type tidbSender struct {
@@ -37,7 +38,7 @@ func (s *tidbSender) Start() {
 	for i := 0; i < 10; i++ {
 		req := &pb.CPUTimeRequestTiDB{
 			Timestamp:     []uint64{uint64(i)},
-			CpuTime:       []uint32{uint32(i*100)},
+			CpuTime:       []uint32{uint32(i * 100)},
 			SqlNormalized: "select ? from t1",
 		}
 		reqBatch = append(reqBatch, req)

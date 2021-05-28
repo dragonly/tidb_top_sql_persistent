@@ -82,13 +82,13 @@ func populateCache1(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 }
 
 func initializeCache(maxSQLNum int) *TopSQLCollector {
-	ts := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
+	ts := NewTopSQLCollector(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	populateCache(ts, 0, maxSQLNum, 1)
 	return ts
 }
 
 func initializeCache1(maxSQLNum int) *TopSQLCollector {
-	ts := NewTopSQL(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
+	ts := NewTopSQLCollector(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
 	populateCache1(ts, 0, maxSQLNum, 1)
 	return ts
 }

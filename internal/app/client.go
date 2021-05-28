@@ -35,7 +35,7 @@ func SendRequest() {
 	}
 	defer conn.Close()
 	c := pb.NewAgentClient(conn)
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	ctx, cancel := context.WithTimeout(dialCtx, time.Second)
 	defer cancel()
 	stream, err := c.CollectTiDB(ctx)
 	if err != nil {

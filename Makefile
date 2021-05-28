@@ -14,11 +14,11 @@
 
 .PHONY: all
 
-all: server
+all: proto
 
-server:
+proto:
 	@echo "generating go protobuf files"
-	protoc -I internal/app/ --go_out=. --go-grpc_out=. internal/app/server.proto
+	protoc -I internal/app/protobuf --go_out=. --go-grpc_out=. internal/app/protobuf/agent.proto
 	@echo ""
 
 test:

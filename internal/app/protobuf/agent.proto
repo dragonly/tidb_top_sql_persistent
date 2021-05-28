@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+option go_package = "internal/app/protobuf";
+
+service Agent {
+    rpc CollectTiDB (stream CPUTimeRequestTiDB) returns (stream Empty) {}
+    rpc CollectTiKV (stream CPUTimeRequestTiKV) returns (stream Empty) {}
+}
+
+message Empty {}
+
+message CPUTimeRequestTiDB {
+    repeated uint64 timestamp = 1;  // timestamp in second
+    repeated uint32 cpu_time = 2;  // range [0, 1000], mapping to [0, 1.000]
+    string sql_digest = 3;
+    string sql_normalized = 4;  // SQL string with sensitive fields trimmed, can be 1M
+    string plan_digest = 5;
+    string plan_normalized = 6;  // can be >1M
+}
+
+message CPUTimeRequestTiKV {
+    repeated uint64 timestamp = 1;  // timestamp in second
+    repeated uint32 cpu_time = 2;  // range [0, 1000], mapping to [0, 1.000]
+    string sql_digest = 3;
+    string plan_digest = 4;
+}

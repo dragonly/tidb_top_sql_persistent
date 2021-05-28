@@ -71,7 +71,7 @@ func (c *agentClient) CollectTiKV(ctx context.Context, opts ...grpc.CallOption) 
 }
 
 type Agent_CollectTiKVClient interface {
-	Send(*CPUTimeRequestTiDB) error
+	Send(*CPUTimeRequestTiKV) error
 	Recv() (*Empty, error)
 	grpc.ClientStream
 }
@@ -80,7 +80,7 @@ type agentCollectTiKVClient struct {
 	grpc.ClientStream
 }
 
-func (x *agentCollectTiKVClient) Send(m *CPUTimeRequestTiDB) error {
+func (x *agentCollectTiKVClient) Send(m *CPUTimeRequestTiKV) error {
 	return x.ClientStream.SendMsg(m)
 }
 
@@ -156,7 +156,7 @@ func _Agent_CollectTiKV_Handler(srv interface{}, stream grpc.ServerStream) error
 
 type Agent_CollectTiKVServer interface {
 	Send(*Empty) error
-	Recv() (*CPUTimeRequestTiDB, error)
+	Recv() (*CPUTimeRequestTiKV, error)
 	grpc.ServerStream
 }
 
@@ -168,8 +168,8 @@ func (x *agentCollectTiKVServer) Send(m *Empty) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *agentCollectTiKVServer) Recv() (*CPUTimeRequestTiDB, error) {
-	m := new(CPUTimeRequestTiDB)
+func (x *agentCollectTiKVServer) Recv() (*CPUTimeRequestTiKV, error) {
+	m := new(CPUTimeRequestTiKV)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -197,5 +197,5 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "server.proto",
+	Metadata: "agent.proto",
 }

@@ -17,11 +17,16 @@ limitations under the License.
 package app
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
+	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
 	"github.com/wangjohn/quickselect"
+	"google.golang.org/grpc"
 )
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -70,6 +75,7 @@ type planRegisterJob struct {
 type TopSQLCollector struct {
 	// // calling this can take a while, so should not block critical paths
 	// planBinaryDecoder planBinaryDecodeFunc
+	mu sync.RWMutex
 
 	// topSQLCache is an LFU cache, which stores top sql records in the next minute from the last send point
 	topSQLCache *LFUCache
@@ -77,18 +83,20 @@ type TopSQLCollector struct {
 	maxSQLNum   int
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
-	normalizedSQLMap   map[string]string
-	normalizedSQLMutex sync.RWMutex
+	normalizedSQLMap map[string]string
 
 	// normalizedPlanMap is a plan version of normalizedSQLMap
 	// this should only be set from the dedicated worker
-	normalizedPlanMap   map[string]string
-	normalizedPlanMutex sync.RWMutex
+	normalizedPlanMap map[string]string
 
 	planRegisterChan chan *planRegisterJob
 
 	// current tidb-server instance ID
 	instanceID string
+
+	agentGRPCAddress string
+
+	quit chan struct{}
 }
 
 func encodeCacheKey(sqlDigest, planDigest string) string {
@@ -105,8 +113,7 @@ func decodeCacheKey(key string) (string, string) {
 // topSQLEvictFuncGenerator is a closure wrapper, which returns the EvictedFunc used on LFU cache eviction
 // the closure variables are normalizedSQLMap and normalizedPlanMap
 func topSQLEvictFuncGenerator(
-	normalizedSQLMutex *sync.RWMutex,
-	normalizedPlanMutex *sync.RWMutex,
+	mu *sync.RWMutex,
 	normalizedSQLMap map[string]string,
 	normalizedPlanMap map[string]string) EvictedHookFunc {
 	topSQLEvictFunc := func(key interface{}, value interface{}) {
@@ -116,20 +123,37 @@ func topSQLEvictFuncGenerator(
 			return
 		}
 		sqlDigest, planDigest := decodeCacheKey(keyStr)
-		normalizedSQLMutex.Lock()
+		mu.Lock()
 		delete(normalizedSQLMap, sqlDigest)
-		normalizedSQLMutex.Unlock()
 		delete(normalizedPlanMap, planDigest)
+		mu.Unlock()
 	}
 	return topSQLEvictFunc
 }
 
-// NewTopSQL creates a new TopSQL struct
+func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, pb.Agent_CollectTiDBClient, error) {
+	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
+	if err != nil {
+		return nil, nil, err
+	}
+	client := pb.NewAgentClient(conn)
+	ctx, cancel := context.WithTimeout(dialCtx, sendingTimeout)
+	defer cancel()
+	stream, err := client.CollectTiDB(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, stream, nil
+}
+
+// NewTopSQLCollector creates a new TopSQL struct
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 // TODO: grpc stream
-func NewTopSQL(
+func NewTopSQLCollector(
 	planBinaryDecoder planBinaryDecodeFunc,
 	maxSQLNum int,
 	instanceID string,
@@ -148,15 +172,12 @@ func NewTopSQL(
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
 		instanceID:        instanceID,
+		quit:              make(chan struct{}),
 	}
-	go registerNormalizedPlanWorker(
-		&ts.normalizedPlanMutex,
-		normalizedPlanMap,
-		planBinaryDecoder,
-		planRegisterChan)
+	go ts.registerNormalizedPlanWorker(planBinaryDecoder)
+	go ts.sendToAgentWorker(time.Minute)
 	ts.topSQLCache.EvictedHook = topSQLEvictFuncGenerator(
-		&ts.normalizedSQLMutex,
-		&ts.normalizedPlanMutex,
+		&ts.mu,
 		normalizedSQLMap,
 		normalizedPlanMap,
 	)
@@ -191,7 +212,8 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	}
 }
 
-// Collect1 uses a map to store records in every minute, and evict every minute.
+// Collect1 uses a hashmap to store records in every minute, and evict every minute.
+// This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
 func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
@@ -231,12 +253,10 @@ func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 	for _, evict := range shouldEvictList {
 		delete(ts.topSQLMap, evict.Key)
 		sqlDigest, planDigest := decodeCacheKey(evict.Key)
-		ts.normalizedSQLMutex.Lock()
+		ts.mu.Lock()
 		delete(ts.normalizedSQLMap, sqlDigest)
-		ts.normalizedSQLMutex.Unlock()
-		ts.normalizedPlanMutex.Lock()
 		delete(ts.normalizedPlanMap, planDigest)
-		ts.normalizedPlanMutex.Unlock()
+		ts.mu.Unlock()
 	}
 }
 
@@ -247,13 +267,13 @@ func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
 func (ts *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
-	ts.normalizedSQLMutex.RLock()
+	ts.mu.RLock()
 	_, exist := ts.normalizedSQLMap[sqlDigest]
-	ts.normalizedSQLMutex.RUnlock()
+	ts.mu.RUnlock()
 	if !exist {
-		ts.normalizedSQLMutex.Lock()
+		ts.mu.Lock()
 		ts.normalizedSQLMap[sqlDigest] = sqlNormalized
-		ts.normalizedSQLMutex.Unlock()
+		ts.mu.Unlock()
 	}
 }
 
@@ -267,17 +287,13 @@ func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, planNormali
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func registerNormalizedPlanWorker(
-	normalizedPlanMutex *sync.RWMutex,
-	normalizedPlanMap map[string]string,
-	planDecoder planBinaryDecodeFunc,
-	jobChan chan *planRegisterJob) {
+func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDecodeFunc) {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
-		job := <-jobChan
-		normalizedPlanMutex.RLock()
-		_, exist := normalizedPlanMap[job.planDigest]
-		normalizedPlanMutex.RUnlock()
+		job := <-ts.planRegisterChan
+		ts.mu.RLock()
+		_, exist := ts.normalizedPlanMap[job.planDigest]
+		ts.mu.RUnlock()
 		if exist {
 			continue
 		}
@@ -286,6 +302,72 @@ func registerNormalizedPlanWorker(
 			fmt.Printf("decode plan failed: %v\n", err)
 			continue
 		}
-		normalizedPlanMap[job.planDigest] = planDecoded
+		ts.normalizedPlanMap[job.planDigest] = planDecoded
+	}
+}
+
+// snapshot will collect the current snapshot of data for transmission
+// This could run in parallel with `Collect()`, so we should guard it by a mutex.
+func (ts *TopSQLCollector) snapshot() []*pb.CPUTimeRequestTiDB {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	total := len(ts.topSQLMap)
+	batch := make([]*pb.CPUTimeRequestTiDB, total)
+	i := 0
+	for key, value := range ts.topSQLMap {
+		sqlDigest, planDigest := decodeCacheKey(key)
+		sqlNormalized := ts.normalizedSQLMap[sqlDigest]
+		planNormalized := ts.normalizedPlanMap[planDigest]
+		batch[i] = &pb.CPUTimeRequestTiDB{
+			Timestamp:      value.TimestampList,
+			CpuTime:        value.CPUTimeMsList,
+			SqlDigest:      sqlDigest,
+			SqlNormalized:  sqlNormalized,
+			PlanDigest:     planDigest,
+			PlanNormalized: planNormalized,
+		}
+		i++
+	}
+	return batch
+}
+
+func (ts *TopSQLCollector) sendBatch(stream pb.Agent_CollectTiDBClient, batch []*pb.CPUTimeRequestTiDB) {
+	for _, req := range batch {
+		if err := stream.Send(req); err != nil {
+			log.Fatalf("send stream request failed: %v", err)
+		}
+		resp, err := stream.Recv()
+		if err != nil {
+			log.Fatalf("receive stream response failed: %v", err)
+		}
+		log.Printf("received stream response: %v", resp)
+	}
+}
+
+// sendToAgentWorker will send a snapshot to the gRPC endpoint every interval
+func (ts *TopSQLCollector) sendToAgentWorker(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	for {
+		select {
+		case <-ticker.C:
+			batch := ts.snapshot()
+			sendingTimeout := interval - 10*time.Second
+			if sendingTimeout < 0 {
+				sendingTimeout = interval / 2
+			}
+			conn, stream, err := newAgentClient(ts.agentGRPCAddress, sendingTimeout)
+			if err != nil {
+				log.Printf("ERROR: failed to create agent client, %v\n", err)
+				continue
+			}
+			ts.sendBatch(stream, batch)
+			if err := conn.Close(); err != nil {
+				log.Printf("ERROR: failed to close connection, %v\n", err)
+				continue
+			}
+		case <-ts.quit:
+			ticker.Stop()
+			return
+		}
 	}
 }
