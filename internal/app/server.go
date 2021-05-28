@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-type agentServer struct{
+type agentServer struct {
 	pb.UnimplementedAgentServer
 }
 
@@ -51,11 +51,11 @@ func StartServer() {
 	if err != nil {
 		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
 	}
-	s := grpc.NewServer()
-	pb.RegisterAgentServer(s, &agentServer{})
+	server := grpc.NewServer()
+	pb.RegisterAgentServer(server, &agentServer{})
 
 	log.Printf("start listening on %s", addr)
-	if err := s.Serve(lis); err != nil {
+	if err := server.Serve(lis); err != nil {
 		log.Fatalf("failed to start gRPC server: %v", err)
 	}
 }

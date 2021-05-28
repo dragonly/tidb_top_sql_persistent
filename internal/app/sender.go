@@ -37,9 +37,9 @@ func (s *tidbSender) Start() {
 	var reqBatch []*pb.CPUTimeRequestTiDB
 	for i := 0; i < 10; i++ {
 		req := &pb.CPUTimeRequestTiDB{
-			Timestamp:     []uint64{uint64(i)},
-			CpuTime:       []uint32{uint32(i * 100)},
-			SqlNormalized: "select ? from t1",
+			TimestampList: []uint64{uint64(i)},
+			CpuTimeMsList: []uint32{uint32(i * 100)},
+			NormalizedSql: "select ? from t1",
 		}
 		reqBatch = append(reqBatch, req)
 	}
@@ -49,7 +49,7 @@ func (s *tidbSender) Start() {
 
 func (s *tidbSender) sendBatch(batch []*pb.CPUTimeRequestTiDB) {
 	for _, req := range batch {
-		req.Timestamp[0] += 1
+		req.TimestampList[0] += 1
 		if err := s.stream.Send(req); err != nil {
 			log.Fatalf("send stream request failed: %v", err)
 		}

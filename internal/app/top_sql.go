@@ -69,7 +69,7 @@ func (t DigestAndCPUTimeSlice) Swap(i, j int) {
 
 type planRegisterJob struct {
 	planDigest     string
-	planNormalized string
+	normalizedPlan string
 }
 
 type TopSQLCollector struct {
@@ -97,6 +97,14 @@ type TopSQLCollector struct {
 	agentGRPCAddress string
 
 	quit chan struct{}
+}
+
+type TopSQLCollectorConfig struct {
+	PlanBinaryDecoder   planBinaryDecodeFunc
+	MaxSQLNum           int
+	SendToAgentInterval time.Duration
+	AgentGRPCAddress    string
+	InstanceID          string
 }
 
 func encodeCacheKey(sqlDigest, planDigest string) string {
@@ -132,15 +140,13 @@ func topSQLEvictFuncGenerator(
 }
 
 func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, pb.Agent_CollectTiDBClient, error) {
-	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
-	defer cancel()
+	dialCtx, _ := context.WithTimeout(context.TODO(), time.Second)
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
 		return nil, nil, err
 	}
 	client := pb.NewAgentClient(conn)
-	ctx, cancel := context.WithTimeout(dialCtx, sendingTimeout)
-	defer cancel()
+	ctx, _ := context.WithTimeout(dialCtx, sendingTimeout)
 	stream, err := client.CollectTiDB(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -153,29 +159,29 @@ func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 // TODO: grpc stream
-func NewTopSQLCollector(
-	planBinaryDecoder planBinaryDecodeFunc,
-	maxSQLNum int,
-	instanceID string,
-) *TopSQLCollector {
+func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	normalizedSQLMap := make(map[string]string)
 	normalizedPlanMap := make(map[string]string)
 	planRegisterChan := make(chan *planRegisterJob, 10)
-	topSQLCache := NewLFUCache(maxSQLNum)
+	topSQLCache := NewLFUCache(config.MaxSQLNum)
 	topSQLMap := make(map[string]*TopSQLDataPoints)
 
 	ts := &TopSQLCollector{
 		topSQLCache:       topSQLCache,
 		topSQLMap:         topSQLMap,
-		maxSQLNum:         maxSQLNum,
+		maxSQLNum:         config.MaxSQLNum,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
-		instanceID:        instanceID,
+		agentGRPCAddress:  config.AgentGRPCAddress,
+		instanceID:        config.InstanceID,
 		quit:              make(chan struct{}),
 	}
-	go ts.registerNormalizedPlanWorker(planBinaryDecoder)
-	go ts.sendToAgentWorker(time.Minute)
+
+	go ts.registerNormalizedPlanWorker(config.PlanBinaryDecoder)
+
+	go ts.sendToAgentWorker(config.SendToAgentInterval)
+
 	ts.topSQLCache.EvictedHook = topSQLEvictFuncGenerator(
 		&ts.mu,
 		normalizedSQLMap,
@@ -266,23 +272,23 @@ func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, sqlNormalized string) {
+func (ts *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, normalizedSQL string) {
 	ts.mu.RLock()
 	_, exist := ts.normalizedSQLMap[sqlDigest]
 	ts.mu.RUnlock()
 	if !exist {
 		ts.mu.Lock()
-		ts.normalizedSQLMap[sqlDigest] = sqlNormalized
+		ts.normalizedSQLMap[sqlDigest] = normalizedSQL
 		ts.mu.Unlock()
 	}
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, planNormalized string) {
+func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalizedPlan string) {
 	ts.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
-		planNormalized: planNormalized,
+		normalizedPlan: normalizedPlan,
 	}
 }
 
@@ -297,7 +303,7 @@ func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDe
 		if exist {
 			continue
 		}
-		planDecoded, err := planDecoder(job.planNormalized)
+		planDecoded, err := planDecoder(job.normalizedPlan)
 		if err != nil {
 			fmt.Printf("decode plan failed: %v\n", err)
 			continue
@@ -316,32 +322,35 @@ func (ts *TopSQLCollector) snapshot() []*pb.CPUTimeRequestTiDB {
 	i := 0
 	for key, value := range ts.topSQLMap {
 		sqlDigest, planDigest := decodeCacheKey(key)
-		sqlNormalized := ts.normalizedSQLMap[sqlDigest]
-		planNormalized := ts.normalizedPlanMap[planDigest]
+		normalizedSQL := ts.normalizedSQLMap[sqlDigest]
+		normalizedPlan := ts.normalizedPlanMap[planDigest]
 		batch[i] = &pb.CPUTimeRequestTiDB{
-			Timestamp:      value.TimestampList,
-			CpuTime:        value.CPUTimeMsList,
+			TimestampList:  value.TimestampList,
+			CpuTimeMsList:  value.CPUTimeMsList,
 			SqlDigest:      sqlDigest,
-			SqlNormalized:  sqlNormalized,
+			NormalizedSql:  normalizedSQL,
 			PlanDigest:     planDigest,
-			PlanNormalized: planNormalized,
+			NormalizedPlan: normalizedPlan,
 		}
 		i++
 	}
 	return batch
 }
 
-func (ts *TopSQLCollector) sendBatch(stream pb.Agent_CollectTiDBClient, batch []*pb.CPUTimeRequestTiDB) {
+func (ts *TopSQLCollector) sendBatch(stream pb.Agent_CollectTiDBClient, batch []*pb.CPUTimeRequestTiDB) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
-			log.Fatalf("send stream request failed: %v", err)
+			log.Printf("ERROR: send stream request failed, %v", err)
+			return err
 		}
-		resp, err := stream.Recv()
+		// response is Empty, drop it for now
+		_, err := stream.Recv()
 		if err != nil {
-			log.Fatalf("receive stream response failed: %v", err)
+			log.Printf("ERROR: receive stream response failed, %v", err)
+			return err
 		}
-		log.Printf("received stream response: %v", resp)
 	}
+	return nil
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every interval
@@ -360,7 +369,9 @@ func (ts *TopSQLCollector) sendToAgentWorker(interval time.Duration) {
 				log.Printf("ERROR: failed to create agent client, %v\n", err)
 				continue
 			}
-			ts.sendBatch(stream, batch)
+			if err := ts.sendBatch(stream, batch); err != nil {
+				continue
+			}
 			if err := conn.Close(); err != nil {
 				log.Printf("ERROR: failed to close connection, %v\n", err)
 				continue

@@ -10,17 +10,17 @@ service Agent {
 message Empty {}
 
 message CPUTimeRequestTiDB {
-    repeated uint64 timestamp = 1;  // timestamp in second
-    repeated uint32 cpu_time = 2;  // range [0, 1000], mapping to [0, 1.000]
+    repeated uint64 timestamp_list = 1;  // timestamp in second
+    repeated uint32 cpu_time_ms_list = 2;  // range [0, 1000], mapping to [0, 1.000]
     string sql_digest = 3;
-    string sql_normalized = 4;  // SQL string with sensitive fields trimmed, can be 1M
+    string normalized_sql = 4;  // SQL string with sensitive fields trimmed, can be 1M
     string plan_digest = 5;
-    string plan_normalized = 6;  // can be >1M
+    string normalized_plan = 6;  // can be >1M
 }
 
 message CPUTimeRequestTiKV {
-    repeated uint64 timestamp = 1;  // timestamp in second
-    repeated uint32 cpu_time = 2;  // range [0, 1000], mapping to [0, 1.000]
+    repeated uint64 timestamp_list = 1;  // timestamp in second
+    repeated uint32 cpu_time_ms_list = 2;  // range [0, 1000], mapping to [0, 1.000]
     string sql_digest = 3;
     string plan_digest = 4;
 }

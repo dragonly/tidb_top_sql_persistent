@@ -17,10 +17,16 @@ limitations under the License.
 package app
 
 import (
+	"fmt"
+	"io"
+	"net"
 	"strconv"
 	"testing"
+	"time"
 
+	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -81,20 +87,68 @@ func populateCache1(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 	ts.Collect1(timestamp, records)
 }
 
-func initializeCache(maxSQLNum int) *TopSQLCollector {
-	ts := NewTopSQLCollector(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
+func initializeCache(maxSQLNum int, addr string) *TopSQLCollector {
+	config := &TopSQLCollectorConfig{
+		PlanBinaryDecoder:   testPlanBinaryDecoderFunc,
+		MaxSQLNum:           maxSQLNum,
+		SendToAgentInterval: time.Minute,
+		AgentGRPCAddress:    addr,
+		InstanceID:          "tidb-server",
+	}
+	ts := NewTopSQLCollector(config)
 	populateCache(ts, 0, maxSQLNum, 1)
 	return ts
 }
 
-func initializeCache1(maxSQLNum int) *TopSQLCollector {
-	ts := NewTopSQLCollector(testPlanBinaryDecoderFunc, maxSQLNum, "tidb-server")
+func initializeCache1(maxSQLNum int, addr string) *TopSQLCollector {
+	config := &TopSQLCollectorConfig{
+		PlanBinaryDecoder:   testPlanBinaryDecoderFunc,
+		MaxSQLNum:           maxSQLNum,
+		SendToAgentInterval: time.Minute,
+		AgentGRPCAddress:    addr,
+		InstanceID:          "tidb-server",
+	}
+	ts := NewTopSQLCollector(config)
 	populateCache1(ts, 0, maxSQLNum, 1)
 	return ts
 }
 
+type testAgentServer struct {
+	pb.UnimplementedAgentServer
+	batch []*pb.CPUTimeRequestTiDB
+}
+
+func (svr *testAgentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		resp := &pb.Empty{}
+		stream.Send(resp)
+		svr.batch = append(svr.batch, req)
+	}
+	return nil
+}
+
+func startTestServer(t *testing.T) (*grpc.Server, *testAgentServer, int) {
+	addr := ":0"
+	lis, err := net.Listen("tcp", addr)
+	assert.NoError(t, err, "failed to listen to address %s", addr)
+	server := grpc.NewServer()
+	agentServer := &testAgentServer{}
+	pb.RegisterAgentServer(server, agentServer)
+	go func() {
+		err := server.Serve(lis)
+		assert.NoError(t, err, "failed to start server")
+	}()
+	return server, agentServer, lis.Addr().(*net.TCPAddr).Port
+}
+
 func TestTopSQL_CollectAndGet(t *testing.T) {
-	ts := initializeCache(maxSQLNum)
+	ts := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
 		planDigest := "planDigest" + strconv.Itoa(i+1)
@@ -106,7 +160,7 @@ func TestTopSQL_CollectAndGet(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndGet1(t *testing.T) {
-	ts := initializeCache1(maxSQLNum)
+	ts := initializeCache1(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
 		planDigest := "planDigest" + strconv.Itoa(i+1)
@@ -118,7 +172,7 @@ func TestTopSQL_CollectAndGet1(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
-	ts := initializeCache(maxSQLNum)
+	ts := initializeCache(maxSQLNum, ":23333")
 	// traverse the frequency list, and check frequency/item content
 	elem := ts.topSQLCache.freqList.Front()
 	for i := 0; i < maxSQLNum; i++ {
@@ -135,7 +189,7 @@ func TestTopSQL_CollectAndVerifyFrequency(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndVerifyFrequency1(t *testing.T) {
-	ts := initializeCache1(maxSQLNum)
+	ts := initializeCache1(maxSQLNum, ":23333")
 	// traverse the map, and check CPU time and content
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
@@ -152,7 +206,7 @@ func TestTopSQL_CollectAndVerifyFrequency1(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndEvict(t *testing.T) {
-	ts := initializeCache(maxSQLNum)
+	ts := initializeCache(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
 	// The first maxSQLNum/2 sql plan digest should have been evicted
@@ -186,7 +240,7 @@ func TestTopSQL_CollectAndEvict(t *testing.T) {
 }
 
 func TestTopSQL_CollectAndEvict1(t *testing.T) {
-	ts := initializeCache1(maxSQLNum)
+	ts := initializeCache1(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache1(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
 	// The first maxSQLNum/2 sql plan digest should have been evicted
@@ -218,22 +272,77 @@ func TestTopSQL_CollectAndEvict1(t *testing.T) {
 	}
 }
 
+func TestTopSQL_CollectAndSnapshot(t *testing.T) {
+	ts := initializeCache1(maxSQLNum, ":23333")
+	batch := ts.snapshot()
+	for _, req := range batch {
+		sqlDigest := req.SqlDigest
+		planDigest := req.PlanDigest
+		key := encodeCacheKey(sqlDigest, planDigest)
+		value, exist := ts.topSQLMap[key]
+		assert.Equal(t, true, exist, "key '%s' should exist")
+		assert.Equal(t, len(value.CPUTimeMsList), len(req.CpuTimeMsList))
+		for i, ct := range value.CPUTimeMsList {
+			assert.Equal(t, ct, req.CpuTimeMsList[i])
+		}
+		assert.Equal(t, len(value.TimestampList), len(req.TimestampList))
+		for i, ts := range value.TimestampList {
+			assert.Equal(t, ts, req.TimestampList[i])
+		}
+	}
+}
+
+func TestTopSQL_CollectAndSendBatch(t *testing.T) {
+	server, agentServer, port := startTestServer(t)
+	t.Logf("server is listening on :%d", port)
+	defer server.Stop()
+
+	ts := initializeCache1(maxSQLNum, fmt.Sprintf(":%d", port))
+	batch := ts.snapshot()
+
+	conn, stream, err := newAgentClient(ts.agentGRPCAddress, 30*time.Second)
+	assert.NoError(t, err, "failed to create agent client")
+	err = ts.sendBatch(stream, batch)
+	assert.NoError(t, err, "failed to send batch to server")
+	err = conn.Close()
+	assert.NoError(t, err, "failed to close connection")
+
+	// check for equality of server received batch and the original data
+	for _, req := range agentServer.batch {
+		key := encodeCacheKey(req.SqlDigest, req.PlanDigest)
+		value, exist := ts.topSQLMap[key]
+		assert.Equal(t, true, exist, "key '%s' should exist in topSQLMap", key)
+		for i, ct := range value.CPUTimeMsList {
+			assert.Equal(t, ct, req.CpuTimeMsList[i])
+		}
+		for i, ts := range value.TimestampList {
+			assert.Equal(t, ts, req.TimestampList[i])
+		}
+		normalizedSQL, exist := ts.normalizedSQLMap[req.SqlDigest]
+		assert.Equal(t, true, exist, "key '%s' should exist in normalizedSQLMap", req.SqlDigest)
+		assert.Equal(t, normalizedSQL, req.NormalizedSql)
+		normalizedPlan, exist := ts.normalizedPlanMap[req.PlanDigest]
+		assert.Equal(t, true, exist, "key '%s' should exist in normalizedPlanMap", req.PlanDigest)
+		assert.Equal(t, normalizedPlan, req.NormalizedPlan)
+	}
+}
+
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	ts := initializeCache(maxSQLNum)
+	ts := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < b.N; i++ {
 		populateCache(ts, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency1(b *testing.B) {
-	ts := initializeCache1(maxSQLNum)
+	ts := initializeCache1(maxSQLNum, ":23333")
 	for i := 0; i < b.N; i++ {
 		populateCache1(ts, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	ts := initializeCache(maxSQLNum)
+	ts := initializeCache(maxSQLNum, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {
@@ -244,7 +353,7 @@ func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 }
 
 func BenchmarkTopSQL_CollectAndEvict1(b *testing.B) {
-	ts := initializeCache1(maxSQLNum)
+	ts := initializeCache1(maxSQLNum, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {
