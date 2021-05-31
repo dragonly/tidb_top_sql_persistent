@@ -343,12 +343,12 @@ func (ts *TopSQLCollector) sendBatch(stream pb.Agent_CollectTiDBClient, batch []
 			log.Printf("ERROR: send stream request failed, %v", err)
 			return err
 		}
-		// response is Empty, drop it for now
-		_, err := stream.Recv()
-		if err != nil {
-			log.Printf("ERROR: receive stream response failed, %v", err)
-			return err
-		}
+	}
+	// response is Empty, drop it for now
+	_, err := stream.CloseAndRecv()
+	if err != nil {
+		log.Printf("ERROR: receive stream response failed, %v", err)
+		return err
 	}
 	return nil
 }

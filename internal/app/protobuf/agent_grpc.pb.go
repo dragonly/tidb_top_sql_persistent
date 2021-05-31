@@ -41,7 +41,7 @@ func (c *agentClient) CollectTiDB(ctx context.Context, opts ...grpc.CallOption) 
 
 type Agent_CollectTiDBClient interface {
 	Send(*CPUTimeRequestTiDB) error
-	Recv() (*Empty, error)
+	CloseAndRecv() (*Empty, error)
 	grpc.ClientStream
 }
 
@@ -53,7 +53,10 @@ func (x *agentCollectTiDBClient) Send(m *CPUTimeRequestTiDB) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *agentCollectTiDBClient) Recv() (*Empty, error) {
+func (x *agentCollectTiDBClient) CloseAndRecv() (*Empty, error) {
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
 	m := new(Empty)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -72,7 +75,7 @@ func (c *agentClient) CollectTiKV(ctx context.Context, opts ...grpc.CallOption) 
 
 type Agent_CollectTiKVClient interface {
 	Send(*CPUTimeRequestTiKV) error
-	Recv() (*Empty, error)
+	CloseAndRecv() (*Empty, error)
 	grpc.ClientStream
 }
 
@@ -84,7 +87,10 @@ func (x *agentCollectTiKVClient) Send(m *CPUTimeRequestTiKV) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *agentCollectTiKVClient) Recv() (*Empty, error) {
+func (x *agentCollectTiKVClient) CloseAndRecv() (*Empty, error) {
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
 	m := new(Empty)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -129,7 +135,7 @@ func _Agent_CollectTiDB_Handler(srv interface{}, stream grpc.ServerStream) error
 }
 
 type Agent_CollectTiDBServer interface {
-	Send(*Empty) error
+	SendAndClose(*Empty) error
 	Recv() (*CPUTimeRequestTiDB, error)
 	grpc.ServerStream
 }
@@ -138,7 +144,7 @@ type agentCollectTiDBServer struct {
 	grpc.ServerStream
 }
 
-func (x *agentCollectTiDBServer) Send(m *Empty) error {
+func (x *agentCollectTiDBServer) SendAndClose(m *Empty) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -155,7 +161,7 @@ func _Agent_CollectTiKV_Handler(srv interface{}, stream grpc.ServerStream) error
 }
 
 type Agent_CollectTiKVServer interface {
-	Send(*Empty) error
+	SendAndClose(*Empty) error
 	Recv() (*CPUTimeRequestTiKV, error)
 	grpc.ServerStream
 }
@@ -164,7 +170,7 @@ type agentCollectTiKVServer struct {
 	grpc.ServerStream
 }
 
-func (x *agentCollectTiKVServer) Send(m *Empty) error {
+func (x *agentCollectTiKVServer) SendAndClose(m *Empty) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -187,13 +193,11 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "CollectTiDB",
 			Handler:       _Agent_CollectTiDB_Handler,
-			ServerStreams: true,
 			ClientStreams: true,
 		},
 		{
 			StreamName:    "CollectTiKV",
 			Handler:       _Agent_CollectTiKV_Handler,
-			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

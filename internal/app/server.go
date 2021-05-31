@@ -39,9 +39,9 @@ func (*agentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error {
 			return err
 		}
 		log.Printf("received: %v\n", req)
-		resp := &pb.Empty{}
-		stream.Send(resp)
 	}
+	resp := &pb.Empty{}
+	stream.SendAndClose(resp)
 	return nil
 }
 

@@ -53,10 +53,10 @@ func (s *tidbSender) sendBatch(batch []*pb.CPUTimeRequestTiDB) {
 		if err := s.stream.Send(req); err != nil {
 			log.Fatalf("send stream request failed: %v", err)
 		}
-		resp, err := s.stream.Recv()
-		if err != nil {
-			log.Fatalf("receive stream response failed: %v", err)
-		}
-		log.Printf("received stream response: %v", resp)
 	}
+	resp, err := s.stream.CloseAndRecv()
+	if err != nil {
+		log.Fatalf("receive stream response failed: %v", err)
+	}
+	log.Printf("received stream response: %v", resp)
 }

@@ -3,8 +3,8 @@ syntax = "proto3";
 option go_package = "internal/app/protobuf";
 
 service Agent {
-    rpc CollectTiDB (stream CPUTimeRequestTiDB) returns (stream Empty) {}
-    rpc CollectTiKV (stream CPUTimeRequestTiKV) returns (stream Empty) {}
+    rpc CollectTiDB (stream CPUTimeRequestTiDB) returns (Empty) {}
+    rpc CollectTiKV (stream CPUTimeRequestTiKV) returns (Empty) {}
 }
 
 message Empty {}
