@@ -29,7 +29,7 @@ type agentServer struct {
 	pb.UnimplementedTopSQLAgentServer
 }
 
-func (*agentServer) CollectTiDB(stream pb.TopSQLAgent_CollectCPUTimeServer) error {
+func (*agentServer) CollectCPUTime(stream pb.TopSQLAgent_CollectCPUTimeServer) error {
 	log.Print("start collecting from tidb-server")
 	for {
 		req, err := stream.Recv()

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: all
+.PHONY: all proto
 
 all: proto test bench
 
@@ -37,3 +37,11 @@ bench:
 	@echo "running benchmark test"
 	go test -benchmem -bench=".*" ./...
 	@echo ""
+
+server:
+	@echo "running demo server"
+	go run main.go serve
+
+client:
+	@echo "running demo client"
+	go run main.go client
