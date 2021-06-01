@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+// ResourceUsageAgent is the persistent agent service for resource usage records
+service ResourceUsageAgent {
+    // CollectCPUTime is called periodically (e.g. per minute) to save the in-memory resource usage records
+    rpc CollectCPUTime(stream CollectCPUTimeRequest) returns (CollectCPUTimeResponse) {}
+}
+
+message CollectCPUTimeRequest {
+    repeated uint64 timestamp_list = 1;  // timestamp in second
+    repeated uint32 cpu_time_ms_list = 2;  // this can be greater than 1000 when counting concurrent running requests
+    bytes resource_tag = 3;  // the tag of the resource grouped by CPU time millisecond.
+}
+
+message CollectCPUTimeResponse {}

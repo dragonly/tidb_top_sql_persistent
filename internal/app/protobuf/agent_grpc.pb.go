@@ -14,190 +14,122 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// AgentClient is the client API for Agent service.
+// TopSQLAgentClient is the client API for TopSQLAgent service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type AgentClient interface {
-	CollectTiDB(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiDBClient, error)
-	CollectTiKV(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiKVClient, error)
+type TopSQLAgentClient interface {
+	// CollectCPUTime is called periodically (e.g. per minute) to save the in-memory TopSQL records
+	CollectCPUTime(ctx context.Context, opts ...grpc.CallOption) (TopSQLAgent_CollectCPUTimeClient, error)
 }
 
-type agentClient struct {
+type topSQLAgentClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewAgentClient(cc grpc.ClientConnInterface) AgentClient {
-	return &agentClient{cc}
+func NewTopSQLAgentClient(cc grpc.ClientConnInterface) TopSQLAgentClient {
+	return &topSQLAgentClient{cc}
 }
 
-func (c *agentClient) CollectTiDB(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiDBClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Agent_ServiceDesc.Streams[0], "/Agent/CollectTiDB", opts...)
+func (c *topSQLAgentClient) CollectCPUTime(ctx context.Context, opts ...grpc.CallOption) (TopSQLAgent_CollectCPUTimeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &TopSQLAgent_ServiceDesc.Streams[0], "/TopSQLAgent/CollectCPUTime", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &agentCollectTiDBClient{stream}
+	x := &topSQLAgentCollectCPUTimeClient{stream}
 	return x, nil
 }
 
-type Agent_CollectTiDBClient interface {
-	Send(*CPUTimeRequestTiDB) error
-	CloseAndRecv() (*Empty, error)
+type TopSQLAgent_CollectCPUTimeClient interface {
+	Send(*CollectCPUTimeRequest) error
+	CloseAndRecv() (*CollectCPUTimeResponse, error)
 	grpc.ClientStream
 }
 
-type agentCollectTiDBClient struct {
+type topSQLAgentCollectCPUTimeClient struct {
 	grpc.ClientStream
 }
 
-func (x *agentCollectTiDBClient) Send(m *CPUTimeRequestTiDB) error {
+func (x *topSQLAgentCollectCPUTimeClient) Send(m *CollectCPUTimeRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *agentCollectTiDBClient) CloseAndRecv() (*Empty, error) {
+func (x *topSQLAgentCollectCPUTimeClient) CloseAndRecv() (*CollectCPUTimeResponse, error) {
 	if err := x.ClientStream.CloseSend(); err != nil {
 		return nil, err
 	}
-	m := new(Empty)
+	m := new(CollectCPUTimeResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *agentClient) CollectTiKV(ctx context.Context, opts ...grpc.CallOption) (Agent_CollectTiKVClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Agent_ServiceDesc.Streams[1], "/Agent/CollectTiKV", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &agentCollectTiKVClient{stream}
-	return x, nil
-}
-
-type Agent_CollectTiKVClient interface {
-	Send(*CPUTimeRequestTiKV) error
-	CloseAndRecv() (*Empty, error)
-	grpc.ClientStream
-}
-
-type agentCollectTiKVClient struct {
-	grpc.ClientStream
-}
-
-func (x *agentCollectTiKVClient) Send(m *CPUTimeRequestTiKV) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *agentCollectTiKVClient) CloseAndRecv() (*Empty, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(Empty)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-// AgentServer is the server API for Agent service.
-// All implementations must embed UnimplementedAgentServer
+// TopSQLAgentServer is the server API for TopSQLAgent service.
+// All implementations must embed UnimplementedTopSQLAgentServer
 // for forward compatibility
-type AgentServer interface {
-	CollectTiDB(Agent_CollectTiDBServer) error
-	CollectTiKV(Agent_CollectTiKVServer) error
-	mustEmbedUnimplementedAgentServer()
+type TopSQLAgentServer interface {
+	// CollectCPUTime is called periodically (e.g. per minute) to save the in-memory TopSQL records
+	CollectCPUTime(TopSQLAgent_CollectCPUTimeServer) error
+	mustEmbedUnimplementedTopSQLAgentServer()
 }
 
-// UnimplementedAgentServer must be embedded to have forward compatible implementations.
-type UnimplementedAgentServer struct {
+// UnimplementedTopSQLAgentServer must be embedded to have forward compatible implementations.
+type UnimplementedTopSQLAgentServer struct {
 }
 
-func (UnimplementedAgentServer) CollectTiDB(Agent_CollectTiDBServer) error {
-	return status.Errorf(codes.Unimplemented, "method CollectTiDB not implemented")
+func (UnimplementedTopSQLAgentServer) CollectCPUTime(TopSQLAgent_CollectCPUTimeServer) error {
+	return status.Errorf(codes.Unimplemented, "method CollectCPUTime not implemented")
 }
-func (UnimplementedAgentServer) CollectTiKV(Agent_CollectTiKVServer) error {
-	return status.Errorf(codes.Unimplemented, "method CollectTiKV not implemented")
-}
-func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
+func (UnimplementedTopSQLAgentServer) mustEmbedUnimplementedTopSQLAgentServer() {}
 
-// UnsafeAgentServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to AgentServer will
+// UnsafeTopSQLAgentServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TopSQLAgentServer will
 // result in compilation errors.
-type UnsafeAgentServer interface {
-	mustEmbedUnimplementedAgentServer()
+type UnsafeTopSQLAgentServer interface {
+	mustEmbedUnimplementedTopSQLAgentServer()
 }
 
-func RegisterAgentServer(s grpc.ServiceRegistrar, srv AgentServer) {
-	s.RegisterService(&Agent_ServiceDesc, srv)
+func RegisterTopSQLAgentServer(s grpc.ServiceRegistrar, srv TopSQLAgentServer) {
+	s.RegisterService(&TopSQLAgent_ServiceDesc, srv)
 }
 
-func _Agent_CollectTiDB_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AgentServer).CollectTiDB(&agentCollectTiDBServer{stream})
+func _TopSQLAgent_CollectCPUTime_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TopSQLAgentServer).CollectCPUTime(&topSQLAgentCollectCPUTimeServer{stream})
 }
 
-type Agent_CollectTiDBServer interface {
-	SendAndClose(*Empty) error
-	Recv() (*CPUTimeRequestTiDB, error)
+type TopSQLAgent_CollectCPUTimeServer interface {
+	SendAndClose(*CollectCPUTimeResponse) error
+	Recv() (*CollectCPUTimeRequest, error)
 	grpc.ServerStream
 }
 
-type agentCollectTiDBServer struct {
+type topSQLAgentCollectCPUTimeServer struct {
 	grpc.ServerStream
 }
 
-func (x *agentCollectTiDBServer) SendAndClose(m *Empty) error {
+func (x *topSQLAgentCollectCPUTimeServer) SendAndClose(m *CollectCPUTimeResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *agentCollectTiDBServer) Recv() (*CPUTimeRequestTiDB, error) {
-	m := new(CPUTimeRequestTiDB)
+func (x *topSQLAgentCollectCPUTimeServer) Recv() (*CollectCPUTimeRequest, error) {
+	m := new(CollectCPUTimeRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func _Agent_CollectTiKV_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AgentServer).CollectTiKV(&agentCollectTiKVServer{stream})
-}
-
-type Agent_CollectTiKVServer interface {
-	SendAndClose(*Empty) error
-	Recv() (*CPUTimeRequestTiKV, error)
-	grpc.ServerStream
-}
-
-type agentCollectTiKVServer struct {
-	grpc.ServerStream
-}
-
-func (x *agentCollectTiKVServer) SendAndClose(m *Empty) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *agentCollectTiKVServer) Recv() (*CPUTimeRequestTiKV, error) {
-	m := new(CPUTimeRequestTiKV)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-// Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
+// TopSQLAgent_ServiceDesc is the grpc.ServiceDesc for TopSQLAgent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Agent_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "Agent",
-	HandlerType: (*AgentServer)(nil),
+var TopSQLAgent_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "TopSQLAgent",
+	HandlerType: (*TopSQLAgentServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "CollectTiDB",
-			Handler:       _Agent_CollectTiDB_Handler,
-			ClientStreams: true,
-		},
-		{
-			StreamName:    "CollectTiKV",
-			Handler:       _Agent_CollectTiKV_Handler,
+			StreamName:    "CollectCPUTime",
+			Handler:       _TopSQLAgent_CollectCPUTime_Handler,
 			ClientStreams: true,
 		},
 	},
