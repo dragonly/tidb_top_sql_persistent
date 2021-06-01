@@ -14,11 +14,18 @@
 
 .PHONY: all
 
-all: proto
+all: proto test bench
 
-proto:
+proto: go-proto rust-proto
+
+go-proto:
 	@echo "generating go protobuf files"
 	protoc -I internal/app/protobuf --go_out=. --go-grpc_out=. internal/app/protobuf/agent.proto
+	@echo ""
+
+rust-proto:
+	@echo "generating rust protobuf files"
+	cd rust && cargo check
 	@echo ""
 
 test:
