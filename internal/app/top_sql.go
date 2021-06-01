@@ -139,15 +139,15 @@ func topSQLEvictFuncGenerator(
 	return topSQLEvictFunc
 }
 
-func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, pb.Agent_CollectTiDBClient, error) {
+func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, pb.TopSQLAgent_CollectCPUTimeClient, error) {
 	dialCtx, _ := context.WithTimeout(context.TODO(), time.Second)
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
 		return nil, nil, err
 	}
-	client := pb.NewAgentClient(conn)
+	client := pb.NewTopSQLAgentClient(conn)
 	ctx, _ := context.WithTimeout(dialCtx, sendingTimeout)
-	stream, err := client.CollectTiDB(ctx)
+	stream, err := client.CollectCPUTime(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -314,17 +314,17 @@ func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDe
 
 // snapshot will collect the current snapshot of data for transmission
 // This could run in parallel with `Collect()`, so we should guard it by a mutex.
-func (ts *TopSQLCollector) snapshot() []*pb.CPUTimeRequestTiDB {
+func (ts *TopSQLCollector) snapshot() []*pb.CollectCPUTimeRequest {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 	total := len(ts.topSQLMap)
-	batch := make([]*pb.CPUTimeRequestTiDB, total)
+	batch := make([]*pb.CollectCPUTimeRequest, total)
 	i := 0
 	for key, value := range ts.topSQLMap {
 		sqlDigest, planDigest := decodeCacheKey(key)
 		normalizedSQL := ts.normalizedSQLMap[sqlDigest]
 		normalizedPlan := ts.normalizedPlanMap[planDigest]
-		batch[i] = &pb.CPUTimeRequestTiDB{
+		batch[i] = &pb.CollectCPUTimeRequest{
 			TimestampList:  value.TimestampList,
 			CpuTimeMsList:  value.CPUTimeMsList,
 			SqlDigest:      sqlDigest,
@@ -337,7 +337,7 @@ func (ts *TopSQLCollector) snapshot() []*pb.CPUTimeRequestTiDB {
 	return batch
 }
 
-func (ts *TopSQLCollector) sendBatch(stream pb.Agent_CollectTiDBClient, batch []*pb.CPUTimeRequestTiDB) error {
+func (ts *TopSQLCollector) sendBatch(stream pb.TopSQLAgent_CollectCPUTimeClient, batch []*pb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
 			log.Printf("ERROR: send stream request failed, %v", err)

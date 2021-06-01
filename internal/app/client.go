@@ -34,10 +34,10 @@ func SendRequest() {
 		log.Fatalf("connecting server failed: %v", err)
 	}
 	defer conn.Close()
-	c := pb.NewAgentClient(conn)
+	c := pb.NewTopSQLAgentClient(conn)
 	ctx, cancel := context.WithTimeout(dialCtx, time.Second)
 	defer cancel()
-	stream, err := c.CollectTiDB(ctx)
+	stream, err := c.CollectCPUTime(ctx)
 	if err != nil {
 		log.Fatalf("open stream failed: %v", err)
 	}

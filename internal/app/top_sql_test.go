@@ -114,11 +114,11 @@ func initializeCache1(maxSQLNum int, addr string) *TopSQLCollector {
 }
 
 type testAgentServer struct {
-	pb.UnimplementedAgentServer
-	batch []*pb.CPUTimeRequestTiDB
+	pb.UnimplementedTopSQLAgentServer
+	batch []*pb.CollectCPUTimeRequest
 }
 
-func (svr *testAgentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error {
+func (svr *testAgentServer) CollectCPUTime(stream pb.TopSQLAgent_CollectCPUTimeServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -126,10 +126,10 @@ func (svr *testAgentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error
 		} else if err != nil {
 			return err
 		}
-		resp := &pb.Empty{}
-		stream.Send(resp)
 		svr.batch = append(svr.batch, req)
 	}
+	resp := &pb.CollectCPUTimeResponse{}
+	stream.SendAndClose(resp)
 	return nil
 }
 
@@ -139,7 +139,7 @@ func startTestServer(t *testing.T) (*grpc.Server, *testAgentServer, int) {
 	assert.NoError(t, err, "failed to listen to address %s", addr)
 	server := grpc.NewServer()
 	agentServer := &testAgentServer{}
-	pb.RegisterAgentServer(server, agentServer)
+	pb.RegisterTopSQLAgentServer(server, agentServer)
 	go func() {
 		err := server.Serve(lis)
 		assert.NoError(t, err, "failed to start server")

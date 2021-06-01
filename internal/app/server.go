@@ -26,10 +26,10 @@ import (
 )
 
 type agentServer struct {
-	pb.UnimplementedAgentServer
+	pb.UnimplementedTopSQLAgentServer
 }
 
-func (*agentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error {
+func (*agentServer) CollectTiDB(stream pb.TopSQLAgent_CollectCPUTimeServer) error {
 	log.Print("start collecting from tidb-server")
 	for {
 		req, err := stream.Recv()
@@ -40,7 +40,7 @@ func (*agentServer) CollectTiDB(stream pb.Agent_CollectTiDBServer) error {
 		}
 		log.Printf("received: %v\n", req)
 	}
-	resp := &pb.Empty{}
+	resp := &pb.CollectCPUTimeResponse{}
 	stream.SendAndClose(resp)
 	return nil
 }
@@ -52,7 +52,7 @@ func StartServer() {
 		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
 	}
 	server := grpc.NewServer()
-	pb.RegisterAgentServer(server, &agentServer{})
+	pb.RegisterTopSQLAgentServer(server, &agentServer{})
 
 	log.Printf("start listening on %s", addr)
 	if err := server.Serve(lis); err != nil {

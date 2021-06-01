@@ -23,10 +23,10 @@ import (
 )
 
 type tidbSender struct {
-	stream pb.Agent_CollectTiDBClient
+	stream pb.TopSQLAgent_CollectCPUTimeClient
 }
 
-func NewTiDBSender(stream pb.Agent_CollectTiDBClient) *tidbSender {
+func NewTiDBSender(stream pb.TopSQLAgent_CollectCPUTimeClient) *tidbSender {
 	return &tidbSender{
 		stream: stream,
 	}
@@ -34,9 +34,9 @@ func NewTiDBSender(stream pb.Agent_CollectTiDBClient) *tidbSender {
 
 // Start starts a goroutine, which sends tidb-server's last minute's data to the gRPC server
 func (s *tidbSender) Start() {
-	var reqBatch []*pb.CPUTimeRequestTiDB
+	var reqBatch []*pb.CollectCPUTimeRequest
 	for i := 0; i < 10; i++ {
-		req := &pb.CPUTimeRequestTiDB{
+		req := &pb.CollectCPUTimeRequest{
 			TimestampList: []uint64{uint64(i)},
 			CpuTimeMsList: []uint32{uint32(i * 100)},
 			NormalizedSql: "select ? from t1",
@@ -47,7 +47,7 @@ func (s *tidbSender) Start() {
 	s.sendBatch(reqBatch)
 }
 
-func (s *tidbSender) sendBatch(batch []*pb.CPUTimeRequestTiDB) {
+func (s *tidbSender) sendBatch(batch []*pb.CollectCPUTimeRequest) {
 	for _, req := range batch {
 		req.TimestampList[0] += 1
 		if err := s.stream.Send(req); err != nil {
