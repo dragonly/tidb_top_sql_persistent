@@ -19,14 +19,14 @@ package app
 import (
 	"log"
 
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type tidbSender struct {
-	stream pb.TopSQLAgent_CollectCPUTimeClient
+	stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient
 }
 
-func NewTiDBSender(stream pb.TopSQLAgent_CollectCPUTimeClient) *tidbSender {
+func NewTiDBSender(stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient) *tidbSender {
 	return &tidbSender{
 		stream: stream,
 	}
@@ -34,12 +34,13 @@ func NewTiDBSender(stream pb.TopSQLAgent_CollectCPUTimeClient) *tidbSender {
 
 // Start starts a goroutine, which sends tidb-server's last minute's data to the gRPC server
 func (s *tidbSender) Start() {
-	var reqBatch []*pb.CollectCPUTimeRequest
+	var reqBatch []*tipb.CPUTimeRecord
 	for i := 0; i < 10; i++ {
-		req := &pb.CollectCPUTimeRequest{
+		req := &tipb.CPUTimeRecord{
+			SqlDigest:     []byte("SQLDigest"),
+			PlanDigest:    []byte("PlanDigest"),
 			TimestampList: []uint64{uint64(i)},
 			CpuTimeMsList: []uint32{uint32(i * 100)},
-			NormalizedSql: "select ? from t1",
 		}
 		reqBatch = append(reqBatch, req)
 	}
@@ -47,7 +48,7 @@ func (s *tidbSender) Start() {
 	s.sendBatch(reqBatch)
 }
 
-func (s *tidbSender) sendBatch(batch []*pb.CollectCPUTimeRequest) {
+func (s *tidbSender) sendBatch(batch []*tipb.CPUTimeRecord) {
 	for _, req := range batch {
 		req.TimestampList[0] += 1
 		if err := s.stream.Send(req); err != nil {

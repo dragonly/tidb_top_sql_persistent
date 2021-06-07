@@ -21,15 +21,23 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
+	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
 
-type agentServer struct {
-	pb.UnimplementedTopSQLAgentServer
+var _ tipb.TopSQLAgentServer = &agentServer{}
+
+type agentServer struct{}
+
+func (*agentServer) ReportPlanMeta(tipb.TopSQLAgent_ReportPlanMetaServer) error {
+	return nil
 }
 
-func (*agentServer) CollectCPUTime(stream pb.TopSQLAgent_CollectCPUTimeServer) error {
+func (*agentServer) ReportSQLMeta(tipb.TopSQLAgent_ReportSQLMetaServer) error {
+	return nil
+}
+
+func (*agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
 	log.Print("start collecting from tidb-server")
 	for {
 		req, err := stream.Recv()
@@ -40,7 +48,7 @@ func (*agentServer) CollectCPUTime(stream pb.TopSQLAgent_CollectCPUTimeServer) e
 		}
 		log.Printf("received: %v\n", req)
 	}
-	resp := &pb.CollectCPUTimeResponse{}
+	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
 }
@@ -52,7 +60,7 @@ func StartServer() {
 		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
 	}
 	server := grpc.NewServer()
-	pb.RegisterTopSQLAgentServer(server, &agentServer{})
+	tipb.RegisterTopSQLAgentServer(server, &agentServer{})
 
 	log.Printf("start listening on %s", addr)
 	if err := server.Serve(lis); err != nil {

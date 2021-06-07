@@ -21,7 +21,7 @@ import (
 	"log"
 	"time"
 
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
+	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
 
@@ -34,10 +34,10 @@ func SendRequest() {
 		log.Fatalf("connecting server failed: %v", err)
 	}
 	defer conn.Close()
-	c := pb.NewTopSQLAgentClient(conn)
+	c := tipb.NewTopSQLAgentClient(conn)
 	ctx, cancel := context.WithTimeout(dialCtx, time.Second)
 	defer cancel()
-	stream, err := c.CollectCPUTime(ctx)
+	stream, err := c.ReportCPUTimeRecords(ctx)
 	if err != nil {
 		log.Fatalf("open stream failed: %v", err)
 	}
