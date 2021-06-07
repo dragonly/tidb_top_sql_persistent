@@ -38,9 +38,13 @@ bench:
 	go test -benchmem -bench=".*" ./...
 	@echo ""
 
+monkey:
+	@echo "running testing server"
+	go run main.go monkey
+
 server:
 	@echo "running demo server"
-	go run main.go serve
+	go run main.go server
 
 client:
 	@echo "running demo client"

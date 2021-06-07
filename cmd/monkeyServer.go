@@ -1,5 +1,5 @@
 /*
-Copyright © 2021 Li Yilong <liyilongko@gmail.com>
+Copyright © 2021 NAME HERE <EMAIL ADDRESS>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,35 +13,33 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
 package cmd
 
 import (
-	"github.com/spf13/cobra"
-
 	"github.com/dragonly/tidb_top_sql_persistent/internal/app"
+	"github.com/spf13/cobra"
 )
 
-// serveCmd represents the serve command
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "start agent server",
-	Long:  `This will start the gRPC server of the data collection agent.`,
+// monkeyCmd represents the monkeyServer command
+var monkeyCmd = &cobra.Command{
+	Use:   "monkey",
+	Short: "Start testing server",
+	Long:  `Monkey server will sometimes drop things`,
 	Run: func(cmd *cobra.Command, args []string) {
-		app.StartServer()
+		app.StartMonkeyServer()
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(monkeyCmd)
 
 	// Here you will define your flags and configuration settings.
 
 	// Cobra supports Persistent Flags which will work for this command
 	// and all subcommands, e.g.:
-	// serveCmd.PersistentFlags().String("foo", "", "A help for foo")
+	// monkeyCmd.PersistentFlags().String("foo", "", "A help for foo")
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// serveCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// monkeyCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
