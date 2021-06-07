@@ -40,17 +40,27 @@ func (*monkeyServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeR
 	return nil
 }
 
-func StartMonkeyServer() {
-	addr := ":23333"
-	lis, err := net.Listen("tcp", addr)
+func StartMonkeyServer(proxyAddress string) {
+	lisProxy, err := net.Listen("tcp", proxyAddress)
+	addrProxy := lisProxy.Addr().(*net.TCPAddr)
 	if err != nil {
-		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
+		log.Fatalf("[proxy] failed to listen on tcp address %s:%d, %v", addrProxy.IP, addrProxy.Port, err)
 	}
+	defer lisProxy.Close()
+	log.Printf("[proxy] start listening on %s:%d", addrProxy.IP, addrProxy.Port)
+
+	lisGRPC, err := net.Listen("tcp", ":0")
+	addrGRPC := lisGRPC.Addr().(*net.TCPAddr)
+	if err != nil {
+		log.Fatalf("[gRPC] failed to listen on tcp address %s:%d, %v", addrGRPC.IP, addrGRPC.Port, err)
+	}
+	defer lisGRPC.Close()
+	log.Printf("[gRPC] start listening on %s:%d", addrGRPC.IP, addrGRPC.Port)
+
 	server := grpc.NewServer()
 	tipb.RegisterTopSQLAgentServer(server, &monkeyServer{})
-
-	log.Printf("[monkey] start listening on %s", addr)
-	if err := server.Serve(lis); err != nil {
+	log.Printf("[gRPC] start gRPC server")
+	if err := server.Serve(lisGRPC); err != nil {
 		log.Fatalf("failed to start gRPC server: %v", err)
 	}
 }

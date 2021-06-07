@@ -20,13 +20,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	proxyAddress *string
+)
+
 // monkeyCmd represents the monkeyServer command
 var monkeyCmd = &cobra.Command{
 	Use:   "monkey",
 	Short: "Start testing server",
 	Long:  `Monkey server will sometimes drop things`,
 	Run: func(cmd *cobra.Command, args []string) {
-		app.StartMonkeyServer()
+		app.StartMonkeyServer(*proxyAddress)
 	},
 }
 
@@ -35,11 +39,5 @@ func init() {
 
 	// Here you will define your flags and configuration settings.
 
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// monkeyCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// monkeyCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	proxyAddress = monkeyCmd.Flags().String("proxy", ":0", "TCP proxy address of the gRPC server")
 }
