@@ -25,6 +25,46 @@ import (
 	"google.golang.org/grpc"
 )
 
+type tidbSender struct {
+	stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient
+}
+
+func NewTiDBSender(stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient) *tidbSender {
+	return &tidbSender{
+		stream: stream,
+	}
+}
+
+// Start starts a goroutine, which sends tidb-server's last minute's data to the gRPC server
+func (s *tidbSender) Start() {
+	var reqBatch []*tipb.CPUTimeRecord
+	for i := 0; i < 10; i++ {
+		req := &tipb.CPUTimeRecord{
+			SqlDigest:     []byte("SQLDigest"),
+			PlanDigest:    []byte("PlanDigest"),
+			TimestampList: []uint64{uint64(i)},
+			CpuTimeMsList: []uint32{uint32(i * 100)},
+		}
+		reqBatch = append(reqBatch, req)
+	}
+
+	s.sendBatch(reqBatch)
+}
+
+func (s *tidbSender) sendBatch(batch []*tipb.CPUTimeRecord) {
+	for _, req := range batch {
+		req.TimestampList[0] += 1
+		if err := s.stream.Send(req); err != nil {
+			log.Fatalf("send stream request failed: %v", err)
+		}
+	}
+	resp, err := s.stream.CloseAndRecv()
+	if err != nil {
+		log.Fatalf("receive stream response failed: %v", err)
+	}
+	log.Printf("received stream response: %v", resp)
+}
+
 func SendRequest() {
 	addr := "localhost:23333"
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
