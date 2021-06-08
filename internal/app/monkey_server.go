@@ -17,16 +17,23 @@ limitations under the License.
 package app
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
 
+// gRPC server
 var _ tipb.TopSQLAgentServer = &monkeyServer{}
 
 type monkeyServer struct{}
@@ -52,6 +59,36 @@ func (*monkeyServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeR
 	return nil
 }
 
+var (
+	dropStartTime atomic.Value // time.Time
+	dropEndTime   atomic.Value //time.Time
+)
+
+// startStdinReader reads commands from stdin, and do things
+func startStdinReader() {
+	dropStartTime.Store(time.Now().Add(-time.Second))
+	dropEndTime.Store(time.Now().Add(-time.Second))
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		text, _ := reader.ReadString('\n')
+		text = strings.Trim(text, "\n")
+		if len(text) > 4 && text[:4] == "drop" {
+			seconds, err := strconv.Atoi(text[5:])
+			if err != nil {
+				log.Printf("[stdin] wrong command: %s, %v\n", text, err)
+				continue
+			}
+			log.Printf("[stdin] drop TCP traffic for %d seconds\n", seconds)
+			now := time.Now()
+			dropStartTime.Store(now)
+			dropEndTime.Store(now.Add(time.Second * time.Duration(seconds)))
+		} else {
+			log.Printf("[stdin] echo: %s\n", text)
+		}
+	}
+}
+
+// startProxyServer proxy TCP traffic to gRPC server, with some interference
 func startProxyServer(lisProxy net.Listener, toPort int) error {
 	toAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("localhost:%d", toPort))
 	if err != nil {
@@ -66,6 +103,12 @@ func startProxyServer(lisProxy net.Listener, toPort int) error {
 			continue
 		}
 		go func() {
+			now := time.Now()
+			if now.After(dropStartTime.Load().(time.Time)) && now.Before(dropEndTime.Load().(time.Time)) {
+				// now the TCP traffic should be dropped
+				log.Print("[proxy] drop TCP traffic")
+				return
+			}
 			defer connFrom.Close()
 			connTo, err := net.DialTCP("tcp", nil, toAddr)
 			log.Printf("new upstream connection: %+v\n", connTo)
@@ -116,6 +159,8 @@ func StartMonkeyServer(proxyAddress string) {
 			log.Fatalf("failed to start gRPC server: %v", err)
 		}
 	}()
+
+	go startStdinReader()
 
 	log.Println("[proxy] start proxying TCP traffic")
 	startProxyServer(lisProxy, addrGRPC.Port)
