@@ -1,4 +1,4 @@
-module github.com/dragonly/tidb_top_sql_persistent
+module github.com/dragonly/tidb_topsql_agent
 
 go 1.16
 

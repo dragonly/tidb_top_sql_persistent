@@ -15,7 +15,7 @@ limitations under the License.
 */
 package main
 
-import "github.com/dragonly/tidb_top_sql_persistent/cmd"
+import "github.com/dragonly/tidb_topsql_agent/cmd"
 
 func main() {
 	cmd.Execute()

@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/dragonly/tidb_top_sql_persistent/internal/app/protobuf"
+	pb "github.com/dragonly/tidb_topsql_agent/internal/app/protobuf"
 	"github.com/wangjohn/quickselect"
 	"google.golang.org/grpc"
 )

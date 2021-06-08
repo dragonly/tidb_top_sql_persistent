@@ -16,7 +16,7 @@ limitations under the License.
 package cmd
 
 import (
-	"github.com/dragonly/tidb_top_sql_persistent/internal/app"
+	"github.com/dragonly/tidb_topsql_agent/internal/app"
 	"github.com/spf13/cobra"
 )
 

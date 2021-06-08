@@ -19,7 +19,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/dragonly/tidb_top_sql_persistent/internal/app"
+	"github.com/dragonly/tidb_topsql_agent/internal/app"
 )
 
 // clientCmd represents the client command

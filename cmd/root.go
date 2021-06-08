@@ -30,7 +30,7 @@ var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "tidb_top_sql_persistent",
+	Use:   "tidb_topsql_agent",
 	Short: "tidb top sql persistent tool",
 	Long:  `A tool that can generate data and run benchmark of tidb top sql persistent feature.`,
 	// Uncomment the following line if your bare application
@@ -51,7 +51,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.tidb_top_sql_persistent.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.tidb_topsql_agent.yaml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
@@ -68,9 +68,9 @@ func initConfig() {
 		home, err := homedir.Dir()
 		cobra.CheckErr(err)
 
-		// Search config in home directory with name ".tidb_top_sql_persistent" (without extension).
+		// Search config in home directory with name ".tidb_topsql_agent" (without extension).
 		viper.AddConfigPath(home)
-		viper.SetConfigName(".tidb_top_sql_persistent")
+		viper.SetConfigName(".tidb_topsql_agent")
 	}
 
 	viper.AutomaticEnv() // read in environment variables that match
