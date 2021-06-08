@@ -17,9 +17,12 @@ limitations under the License.
 package app
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
+	"time"
 
+	influxdb "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -77,4 +80,27 @@ func GeneratePlanMeta(planMetaChan chan *tipb.PlanMeta) {
 			}
 		}
 	}
+}
+
+func WriteInfluxDB() {
+	recordChan := make(chan *tipb.CPUTimeRecord, 1)
+	sqlMetaChan := make(chan *tipb.SQLMeta, 1)
+	planMetaChan := make(chan *tipb.PlanMeta, 1)
+	go GenerateCPUTimeRecords(recordChan)
+	go GenerateSQLMeta(sqlMetaChan)
+	go GeneratePlanMeta(planMetaChan)
+
+	org := "pingcap"
+	bucket := "test"
+	token := "cUDigADLBUvQHTabhzjBjL_YM1MVofBUUSZx_-uwKy8mR4S_Eqjt6myugvj3ryOfRUBHOGnlyCbTkKbNGVt1rQ=="
+	url := "http://localhost:2333"
+	client := influxdb.NewClient(url, token)
+	writeAPI := client.WriteAPIBlocking(org, bucket)
+	p := influxdb.NewPoint("stat",
+		map[string]string{"uint": "temperatur"},
+		map[string]interface{}{"avg": 24.5, "max": 45},
+		time.Now(),
+	)
+	writeAPI.WritePoint(context.TODO(), p)
+	client.Close()
 }
