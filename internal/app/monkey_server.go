@@ -126,6 +126,7 @@ func startProxyServer(lisProxy net.Listener, toPort int) error {
 	}
 }
 
+// TODO: support dropping in-flight TCP packets, loop with CopyN
 func copy(wg *sync.WaitGroup, dst io.Writer, src io.Reader) {
 	n, err := io.Copy(dst, src)
 	log.Printf("copied %d bytes from %v to %v, err: %v", n, src, dst, err)

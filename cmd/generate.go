@@ -33,6 +33,8 @@ var generateCmd = &cobra.Command{
 		switch *target {
 		case "influxdb":
 			app.WriteInfluxDB()
+		case "tidb":
+			app.WriteTiDB()
 		}
 	},
 }

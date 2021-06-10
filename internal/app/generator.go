@@ -21,9 +21,13 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql"
 	influxdb "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
@@ -164,4 +168,69 @@ func WriteInfluxDB() {
 	wg.Wait()
 
 	client.Close()
+}
+
+func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
+	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+	if err != nil {
+		log.Fatalf("failed to open db: %v\n", err)
+	}
+	defer db.Close()
+	for {
+		records := <-recordsChan
+		var sqlBuf strings.Builder
+		sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms) VALUES ")
+		values := make([]interface{}, 0, len(records.TimestampList)*4)
+		for i, ts := range records.TimestampList {
+			cpuTimeMs := records.CpuTimeMsList[i]
+			var instance_id, sql_id int
+			_, err := fmt.Sscanf(string(records.SqlDigest), "i%d_sql%d", &instance_id, &sql_id)
+			if err != nil {
+				log.Fatalf("failed to parse instance ID in invalid SQL digest '%s', %v", records.SqlDigest, err)
+			}
+			// log.Printf("parsed %d items\n", n)
+			values = append(values, string(records.SqlDigest), string(records.PlanDigest), ts, cpuTimeMs)
+			sqlBuf.WriteString("(?,?,?,?)")
+			if i != len(records.TimestampList)-1 {
+				sqlBuf.WriteString(",")
+			}
+		}
+		sql := sqlBuf.String()
+		stmt, err := db.Prepare(sql)
+		if err != nil {
+			log.Fatalf("failed to prepare for SQL statement, %v", err)
+		}
+		_, err = stmt.Exec(values...)
+		if err != nil {
+			log.Fatalf("failed to execute SQL statement, %v", err)
+		}
+		// log.Printf("execute SQL result: %v", result)
+	}
+}
+
+func WriteTiDB() {
+	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum)
+	go GenerateCPUTimeRecords(recordChan)
+	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+	if err != nil {
+		log.Fatalf("failed to open db: %v\n", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cpu_time (
+		id BIGINT AUTO_RANDOM NOT NULL,
+		sql_digest VARBINARY(32) NOT NULL,
+		plan_digest VARBINARY(32),
+		timestamp INTEGER NOT NULL,
+		cpu_time_ms INTEGER NOT NULL,
+		PRIMARY KEY (id)
+	);`)
+	log.Printf("create table err: %v\n", err)
+	_, err = db.Exec("ALTER TABLE cpu_time SET TIFLASH REPLICA 1;")
+	log.Printf("set tiflash err: %v\n", err)
+	for i := 0; i < writeWorkerNum; i++ {
+		go writeCPUTimeRecordsTiDB(recordChan)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	wg.Wait()
 }
