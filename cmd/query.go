@@ -23,28 +23,28 @@ import (
 )
 
 var (
-	generateTarget *string
+	queryTarget *string
 )
 
-// generateCmd represents the generate command
-var generateCmd = &cobra.Command{
-	Use:   "generate",
-	Short: "generate data for test",
-	Long:  `This command generates mock data for different database targets.`,
+// queryCmd represents the query command
+var queryCmd = &cobra.Command{
+	Use:   "query",
+	Short: "query data for test",
+	Long:  `This command runs query to test different database targets`,
 	Run: func(cmd *cobra.Command, args []string) {
-		switch *generateTarget {
+		log.Println("start query")
+		switch *queryTarget {
 		case "influxdb":
-			app.WriteInfluxDB()
+			app.QueryInfluxDB()
 		case "tidb":
-			app.WriteTiDB()
 		default:
-			log.Fatalf("Unsupported target [%s]\n", *generateTarget)
+			log.Fatalf("Unsupported target [%s]\n", *queryTarget)
 		}
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(generateCmd)
+	rootCmd.AddCommand(queryCmd)
 
-	generateTarget = generateCmd.Flags().StringP("target", "t", "influxdb", "select the data generation target database, supports influxdb|tidb")
+	queryTarget = queryCmd.Flags().StringP("target", "t", "influxdb", "select the data generation target database, supports influxdb|tidb")
 }

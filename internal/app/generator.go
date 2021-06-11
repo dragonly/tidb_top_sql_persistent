@@ -170,7 +170,7 @@ func writeCPUTimeRecordsInfluxDB(writeAPI api.WriteAPIBlocking, recordsChan chan
 	}
 }
 
-func writeSQLMeta(writeAPI api.WriteAPIBlocking, sqlMetaChan chan *tipb.SQLMeta) {
+func writeSQLMetaInfluxDB(writeAPI api.WriteAPIBlocking, sqlMetaChan chan *tipb.SQLMeta) {
 	for {
 		meta := <-sqlMetaChan
 		p := influxdb.NewPoint("sql_meta",
@@ -186,7 +186,7 @@ func writeSQLMeta(writeAPI api.WriteAPIBlocking, sqlMetaChan chan *tipb.SQLMeta)
 	}
 }
 
-func writePlanMeta(writeAPI api.WriteAPIBlocking, planMetaChan chan *tipb.PlanMeta) {
+func writePlanMetaInfluxDB(writeAPI api.WriteAPIBlocking, planMetaChan chan *tipb.PlanMeta) {
 	for {
 		meta := <-planMetaChan
 		p := influxdb.NewPoint("plan_meta",
@@ -212,10 +212,10 @@ func WriteInfluxDB() {
 	go GenerateSQLMeta(sqlMetaChan)
 	go GeneratePlanMeta(planMetaChan)
 
+	url := "http://localhost:2333"
+	token := "cUDigADLBUvQHTabhzjBjL_YM1MVofBUUSZx_-uwKy8mR4S_Eqjt6myugvj3ryOfRUBHOGnlyCbTkKbNGVt1rQ=="
 	org := "pingcap"
 	bucket := "test"
-	token := "cUDigADLBUvQHTabhzjBjL_YM1MVofBUUSZx_-uwKy8mR4S_Eqjt6myugvj3ryOfRUBHOGnlyCbTkKbNGVt1rQ=="
-	url := "http://localhost:2333"
 	client := influxdb.NewClient(url, token)
 	writeAPI := client.WriteAPIBlocking(org, bucket)
 	// t, _ := time.Parse(time.RFC3339, "2006-01-02T15:04:05Z")
@@ -227,12 +227,43 @@ func WriteInfluxDB() {
 	// writeAPI.WritePoint(context.TODO(), p)
 	for i := 0; i < writeWorkerNum; i++ {
 		// go writeCPUTimeRecordsInfluxDB(writeAPI, recordChan)
-		go writeSQLMeta(writeAPI, sqlMetaChan)
-		go writePlanMeta(writeAPI, planMetaChan)
+		go writeSQLMetaInfluxDB(writeAPI, sqlMetaChan)
+		go writePlanMetaInfluxDB(writeAPI, planMetaChan)
 	}
 	wg.Wait()
 
 	client.Close()
+}
+
+func queryInfluxDB(queryAPI api.QueryAPI, startTs, endTs int) {
+	query := fmt.Sprintf(`from(bucket: "test")
+	|> range(start:%d, stop:%d)
+	|> group()
+	|> count()
+	`, startTs, endTs)
+	result, err := queryAPI.Query(context.TODO(), query)
+	if err != nil {
+		log.Printf("failed to execute query, %v\n%s\n", err, query)
+		return
+	}
+	for result.Next() {
+		if result.TableChanged() {
+			log.Printf("table: %s\n", result.TableMetadata().String())
+		}
+		log.Printf("value: %v\n", result.Record().Values())
+	}
+	if result.Err() != nil {
+		log.Printf("query parsing error: %v\n", result.Err().Error())
+	}
+}
+
+func QueryInfluxDB() {
+	url := "http://localhost:2333"
+	token := "cUDigADLBUvQHTabhzjBjL_YM1MVofBUUSZx_-uwKy8mR4S_Eqjt6myugvj3ryOfRUBHOGnlyCbTkKbNGVt1rQ=="
+	org := "pingcap"
+	client := influxdb.NewClient(url, token)
+	queryAPI := client.QueryAPI(org)
+	queryInfluxDB(queryAPI, 0, 60)
 }
 
 func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
