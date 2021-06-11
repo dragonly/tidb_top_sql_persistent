@@ -39,7 +39,7 @@ const (
 	instanceNum    = 100
 	startTs        = 0
 	endTs          = 60 * 60 * 24
-	writeWorkerNum = 10
+	writeWorkerNum = 5
 )
 
 func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
@@ -48,6 +48,7 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 	lastTime := time.Now()
 	qps := 0
 	for minute := startTs; minute < endTs/60; minute++ {
+		log.Printf("[cpu time] timestamp: %d\n", minute*60)
 		for i := 0; i < instanceNum; i++ {
 			for j := 0; j < sqlNum; j++ {
 				var tsList []uint64
@@ -64,7 +65,7 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 				}
 				count++
 				if count%100 == 0 {
-					log.Printf("generated %d records, qps %d\n", count, qps)
+					log.Printf("[cpu time] generated %d records, qps %d\n", count, qps)
 					now := time.Now()
 					duration := now.Sub(lastTime)
 					if duration > time.Second {
@@ -79,6 +80,10 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 }
 
 func GenerateSQLMeta(sqlMetaChan chan *tipb.SQLMeta) {
+	count := 0
+	lastCount := 0
+	lastTime := time.Now()
+	qps := 0
 	for i := 0; i < instanceNum; i++ {
 		for j := 0; j < sqlNum; j++ {
 			sqlDigest := []byte(fmt.Sprintf("i%d_sql%d", i, j))
@@ -91,11 +96,26 @@ func GenerateSQLMeta(sqlMetaChan chan *tipb.SQLMeta) {
 				SqlDigest:     sqlDigest,
 				NormalizedSql: string(sql),
 			}
+			count++
+			if count%100 == 0 {
+				log.Printf("[sql meta] generated %d records, qps %d\n", count, qps)
+				now := time.Now()
+				duration := now.Sub(lastTime)
+				if duration > time.Second {
+					qps = 60 * (count - lastCount) * int(time.Second) / int(duration)
+					lastCount = count
+					lastTime = now
+				}
+			}
 		}
 	}
 }
 
 func GeneratePlanMeta(planMetaChan chan *tipb.PlanMeta) {
+	count := 0
+	lastCount := 0
+	lastTime := time.Now()
+	qps := 0
 	for i := 0; i < instanceNum; i++ {
 		for j := 0; j < sqlNum; j++ {
 			planDigest := []byte(fmt.Sprintf("i%d_plan%d", i, j))
@@ -108,11 +128,22 @@ func GeneratePlanMeta(planMetaChan chan *tipb.PlanMeta) {
 				PlanDigest:     planDigest,
 				NormalizedPlan: string(plan),
 			}
+			count++
+			if count%100 == 0 {
+				log.Printf("[plan meta] generated %d records, qps %d\n", count, qps)
+				now := time.Now()
+				duration := now.Sub(lastTime)
+				if duration > time.Second {
+					qps = 60 * (count - lastCount) * int(time.Second) / int(duration)
+					lastCount = count
+					lastTime = now
+				}
+			}
 		}
 	}
 }
 
-func writeCPUTimeRecordsInfluxDB(wg *sync.WaitGroup, writeAPI api.WriteAPIBlocking, recordsChan chan *tipb.CPUTimeRecord) {
+func writeCPUTimeRecordsInfluxDB(writeAPI api.WriteAPIBlocking, recordsChan chan *tipb.CPUTimeRecord) {
 	// i := 0
 	for {
 		records := <-recordsChan
@@ -139,10 +170,42 @@ func writeCPUTimeRecordsInfluxDB(wg *sync.WaitGroup, writeAPI api.WriteAPIBlocki
 	}
 }
 
+func writeSQLMeta(writeAPI api.WriteAPIBlocking, sqlMetaChan chan *tipb.SQLMeta) {
+	for {
+		meta := <-sqlMetaChan
+		p := influxdb.NewPoint("sql_meta",
+			map[string]string{
+				"sql_digest": string(meta.SqlDigest),
+			},
+			map[string]interface{}{
+				"normalized_sql": meta.NormalizedSql,
+			},
+			time.Now(),
+		)
+		writeAPI.WritePoint(context.TODO(), p)
+	}
+}
+
+func writePlanMeta(writeAPI api.WriteAPIBlocking, planMetaChan chan *tipb.PlanMeta) {
+	for {
+		meta := <-planMetaChan
+		p := influxdb.NewPoint("plan_meta",
+			map[string]string{
+				"plan_digest": string(meta.PlanDigest),
+			},
+			map[string]interface{}{
+				"normalized_plan": meta.NormalizedPlan,
+			},
+			time.Now(),
+		)
+		writeAPI.WritePoint(context.TODO(), p)
+	}
+}
+
 func WriteInfluxDB() {
-	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum)
-	sqlMetaChan := make(chan *tipb.SQLMeta, writeWorkerNum)
-	planMetaChan := make(chan *tipb.PlanMeta, writeWorkerNum)
+	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum*2)
+	sqlMetaChan := make(chan *tipb.SQLMeta, writeWorkerNum*2)
+	planMetaChan := make(chan *tipb.PlanMeta, writeWorkerNum*2)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go GenerateCPUTimeRecords(recordChan)
@@ -163,7 +226,9 @@ func WriteInfluxDB() {
 	// )
 	// writeAPI.WritePoint(context.TODO(), p)
 	for i := 0; i < writeWorkerNum; i++ {
-		go writeCPUTimeRecordsInfluxDB(&wg, writeAPI, recordChan)
+		// go writeCPUTimeRecordsInfluxDB(writeAPI, recordChan)
+		go writeSQLMeta(writeAPI, sqlMetaChan)
+		go writePlanMeta(writeAPI, planMetaChan)
 	}
 	wg.Wait()
 
@@ -176,30 +241,33 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
 	defer db.Close()
+
+	var sqlBuf strings.Builder
+	sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms) VALUES ")
+	for i := 0; i < 59; i++ {
+		sqlBuf.WriteString("(?,?,?,?),")
+	}
+	sqlBuf.WriteString("(?,?,?,?)")
+	sql := sqlBuf.String()
+	stmt, err := db.Prepare(sql)
+	if err != nil {
+		log.Fatalf("failed to prepare for SQL statement, %v", err)
+	}
+
 	for {
 		records := <-recordsChan
-		var sqlBuf strings.Builder
-		sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms) VALUES ")
 		values := make([]interface{}, 0, len(records.TimestampList)*4)
 		for i, ts := range records.TimestampList {
 			cpuTimeMs := records.CpuTimeMsList[i]
-			var instance_id, sql_id int
-			_, err := fmt.Sscanf(string(records.SqlDigest), "i%d_sql%d", &instance_id, &sql_id)
-			if err != nil {
-				log.Fatalf("failed to parse instance ID in invalid SQL digest '%s', %v", records.SqlDigest, err)
-			}
+			// var instance_id, sql_id int
+			// _, err := fmt.Sscanf(string(records.SqlDigest), "i%d_sql%d", &instance_id, &sql_id)
+			// if err != nil {
+			// 	log.Fatalf("failed to parse instance ID in invalid SQL digest '%s', %v", records.SqlDigest, err)
+			// }
 			// log.Printf("parsed %d items\n", n)
 			values = append(values, string(records.SqlDigest), string(records.PlanDigest), ts, cpuTimeMs)
-			sqlBuf.WriteString("(?,?,?,?)")
-			if i != len(records.TimestampList)-1 {
-				sqlBuf.WriteString(",")
-			}
 		}
-		sql := sqlBuf.String()
-		stmt, err := db.Prepare(sql)
-		if err != nil {
-			log.Fatalf("failed to prepare for SQL statement, %v", err)
-		}
+
 		_, err = stmt.Exec(values...)
 		if err != nil {
 			log.Fatalf("failed to execute SQL statement, %v", err)
@@ -209,7 +277,7 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 }
 
 func WriteTiDB() {
-	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum)
+	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum*2)
 	go GenerateCPUTimeRecords(recordChan)
 	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
 	if err != nil {

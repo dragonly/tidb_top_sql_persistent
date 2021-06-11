@@ -16,6 +16,8 @@ limitations under the License.
 package cmd
 
 import (
+	"log"
+
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +37,8 @@ var generateCmd = &cobra.Command{
 			app.WriteInfluxDB()
 		case "tidb":
 			app.WriteTiDB()
+		default:
+			log.Fatalf("Unsupported target [%s]\n", *target)
 		}
 	},
 }
