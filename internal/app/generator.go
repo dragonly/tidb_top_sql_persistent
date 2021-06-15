@@ -235,6 +235,7 @@ func WriteInfluxDB() {
 	client.Close()
 }
 
+// TODO: join with sql/plan meta
 func queryInfluxDB(queryAPI api.QueryAPI, startTs, endTs int) {
 	query := fmt.Sprintf(`from(bucket: "test")
 	|> range(start:%d, stop:%d)
@@ -276,9 +277,9 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 	var sqlBuf strings.Builder
 	sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms) VALUES ")
 	for i := 0; i < 59; i++ {
-		sqlBuf.WriteString("(?,?,?,?),")
+		sqlBuf.WriteString("(?, ?, ?, ?),")
 	}
-	sqlBuf.WriteString("(?,?,?,?)")
+	sqlBuf.WriteString("(?, ?, ?, ?)")
 	sql := sqlBuf.String()
 	stmt, err := db.Prepare(sql)
 	if err != nil {
@@ -307,27 +308,104 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 	}
 }
 
-func WriteTiDB() {
-	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum*2)
-	go GenerateCPUTimeRecords(recordChan)
+func writeSQLMetaTiDB(sqlMetaChan chan *tipb.SQLMeta) {
 	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cpu_time (
+
+	sql := "INSERT INTO sql_meta (sql_digest, normalized_sql) VALUES (?, ?)"
+	stmt, err := db.Prepare(sql)
+	if err != nil {
+		log.Fatalf("failed to prepare for SQL statement, %v", err)
+	}
+
+	for {
+		sqlMeta := <-sqlMetaChan
+		values := []interface{}{sqlMeta.SqlDigest, sqlMeta.NormalizedSql}
+		_, err = stmt.Exec(values...)
+		if err != nil {
+			log.Fatalf("failed to insert sql meta, %v", err)
+		}
+	}
+}
+
+func writePlanMetaTiDB(planMetaChan chan *tipb.PlanMeta) {
+	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+	if err != nil {
+		log.Fatalf("failed to open db: %v\n", err)
+	}
+	defer db.Close()
+
+	sql := "INSERT INTO plan_meta (plan_digest, normalized_plan) VALUES (?, ?)"
+	stmt, err := db.Prepare(sql)
+	if err != nil {
+		log.Fatalf("failed to prepare for SQL statement, %v", err)
+	}
+
+	for {
+		planMeta := <-planMetaChan
+		values := []interface{}{planMeta.PlanDigest, planMeta.NormalizedPlan}
+		_, err = stmt.Exec(values...)
+		if err != nil {
+			log.Fatalf("failed to insert plan meta, %v", err)
+		}
+	}
+}
+
+func WriteTiDB() {
+	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum*2)
+	sqlMetaChan := make(chan *tipb.SQLMeta, writeWorkerNum*2)
+	planMetaChan := make(chan *tipb.PlanMeta, writeWorkerNum*2)
+	go GenerateCPUTimeRecords(recordChan)
+	go GenerateSQLMeta(sqlMetaChan)
+	go GeneratePlanMeta(planMetaChan)
+
+	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+	if err != nil {
+		log.Fatalf("failed to open db: %v\n", err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS cpu_time (
 		id BIGINT AUTO_RANDOM NOT NULL,
 		sql_digest VARBINARY(32) NOT NULL,
 		plan_digest VARBINARY(32),
 		timestamp INTEGER NOT NULL,
 		cpu_time_ms INTEGER NOT NULL,
 		PRIMARY KEY (id)
-	);`)
-	log.Printf("create table err: %v\n", err)
-	_, err = db.Exec("ALTER TABLE cpu_time SET TIFLASH REPLICA 1;")
-	log.Printf("set tiflash err: %v\n", err)
+	);`); err != nil {
+		log.Fatalf("create table err: %v\n", err)
+	}
+	if _, err = db.Exec("ALTER TABLE cpu_time SET TIFLASH REPLICA 1;"); err != nil {
+		log.Fatalf("set tiflash replica err: %v\n", err)
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS sql_meta (
+		id BIGINT AUTO_RANDOM NOT NULL,
+		sql_digest VARBINARY(32) NOT NULL,
+		normalized_sql LONGTEXT NOT NULL,
+		PRIMARY KEY (id)
+	);`); err != nil {
+		log.Fatalf("create table err: %v\n", err)
+	}
+	if _, err = db.Exec("ALTER TABLE sql_meta SET TIFLASH REPLICA 1;"); err != nil {
+		log.Fatalf("set tiflash replica err: %v\n", err)
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS plan_meta (
+		id BIGINT AUTO_RANDOM NOT NULL,
+		plan_digest VARBINARY(32) NOT NULL,
+		normalized_plan LONGTEXT NOT NULL,
+		PRIMARY KEY (id)
+	);`); err != nil {
+		log.Fatalf("create table err: %v\n", err)
+	}
+	if _, err = db.Exec("ALTER TABLE plan_meta SET TIFLASH REPLICA 1;"); err != nil {
+		log.Fatalf("set tiflash replica err: %v\n", err)
+	}
 	for i := 0; i < writeWorkerNum; i++ {
-		go writeCPUTimeRecordsTiDB(recordChan)
+		// go writeCPUTimeRecordsTiDB(recordChan)
+		go writeSQLMetaTiDB(sqlMetaChan)
+		go writePlanMetaTiDB(planMetaChan)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
