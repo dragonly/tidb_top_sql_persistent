@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +39,7 @@ const (
 	sqlNum         = 200
 	instanceNum    = 100
 	startTs        = 0
-	endTs          = 60 * 60 * 24
+	endTs          = 60 * 60 * 1
 	writeWorkerNum = 5
 )
 
@@ -150,10 +151,13 @@ func writeCPUTimeRecordsInfluxDB(writeAPI api.WriteAPIBlocking, recordsChan chan
 		var points []*write.Point
 		for i, ts := range records.TimestampList {
 			cpuTimeMs := records.CpuTimeMsList[i]
+			sep := strings.Split(string(records.SqlDigest), "_")
+			instanceID := sep[0][1:]
 			p := influxdb.NewPoint("cpu_time",
 				map[string]string{
 					"sql_digest":  string(records.SqlDigest),
 					"plan_digest": string(records.PlanDigest),
+					"instance_id": instanceID,
 				},
 				map[string]interface{}{
 					"cpu_time_ms": cpuTimeMs,
@@ -226,7 +230,7 @@ func WriteInfluxDB() {
 	// )
 	// writeAPI.WritePoint(context.TODO(), p)
 	for i := 0; i < writeWorkerNum; i++ {
-		// go writeCPUTimeRecordsInfluxDB(writeAPI, recordChan)
+		go writeCPUTimeRecordsInfluxDB(writeAPI, recordChan)
 		go writeSQLMetaInfluxDB(writeAPI, sqlMetaChan)
 		go writePlanMetaInfluxDB(writeAPI, planMetaChan)
 	}
@@ -236,12 +240,22 @@ func WriteInfluxDB() {
 }
 
 // TODO: join with sql/plan meta
-func queryInfluxDB(queryAPI api.QueryAPI, startTs, endTs int) {
-	query := fmt.Sprintf(`from(bucket: "test")
+func queryInfluxDB(queryAPI api.QueryAPI, startTs, endTs, instance_id int) {
+	query := fmt.Sprintf(`from(bucket:"test")
 	|> range(start:%d, stop:%d)
-	|> group()
-	|> count()
-	`, startTs, endTs)
+	|> filter(fn: (r) =>
+		r._measurement == "cpu_time" and
+		r.instance_id == "%d"
+	)
+	// |> window(every: 1m)
+	// |> sum(column: "_value")
+	// |> duplicate(column: "_stop", as: "_time")
+	|> drop(columns: ["_start", "_stop", "_measurement"])
+	|> group(columns: ["_time"])
+	|> sort(columns: ["_value"], desc: true)
+	|> limit(n:5)
+	//|> window(every: inf)
+	`, startTs, endTs, instance_id)
 	result, err := queryAPI.Query(context.TODO(), query)
 	if err != nil {
 		log.Printf("failed to execute query, %v\n%s\n", err, query)
@@ -264,22 +278,62 @@ func QueryInfluxDB() {
 	org := "pingcap"
 	client := influxdb.NewClient(url, token)
 	queryAPI := client.QueryAPI(org)
-	queryInfluxDB(queryAPI, 0, 60)
+	queryInfluxDB(queryAPI, 0, 60*60, 1)
 }
 
-func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
-	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+func QueryTiDB() {
+	dsn := "root:@tcp(127.0.0.1:4000)/test?charset=utf8"
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("failed to open db: %v\n", err)
+	}
+	defer db.Close()
+
+	queryTiDB(db, 0, 60, 0)
+}
+
+func queryTiDB(db *sql.DB, startTs, endTs, instance_id int) {
+	sql := `
+	SELECT *
+	FROM (SELECT *, RANK() OVER (PARTITION BY topsql.time_window ORDER BY topsql.cpu_time_sum DESC ) AS rk
+		FROM (SELECT instance_id, sql_digest, floor(timestamp / 60) AS time_window, sum(cpu_time_ms) AS cpu_time_sum
+			FROM cpu_time
+			WHERE timestamp >= %d
+				AND timestamp < %d
+				AND instance_id = %d
+			GROUP BY time_window, sql_digest) topsql) sql_ranked
+	WHERE sql_ranked.rk <= 5
+	`
+	sql = fmt.Sprintf(sql, startTs, endTs, instance_id)
+	rows, err := db.Query(sql)
+	if err != nil {
+		log.Fatalf("failed to query TiDB, %v", err)
+	}
+	defer rows.Close()
+	log.Println("cpu_time: cpu_time_count, minute")
+	for rows.Next() {
+		var cpu_time_count int
+		var minute int
+		if err := rows.Scan(&cpu_time_count, &minute); err != nil {
+			log.Fatalf("failed to iterate rows, %v", err)
+		}
+		log.Printf("row: %d, %d\n", cpu_time_count, minute)
+	}
+}
+
+func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord, dsn string) {
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
 	defer db.Close()
 
 	var sqlBuf strings.Builder
-	sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms) VALUES ")
+	sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms, instance_id) VALUES ")
 	for i := 0; i < 59; i++ {
-		sqlBuf.WriteString("(?, ?, ?, ?),")
+		sqlBuf.WriteString("(?, ?, ?, ?, ?),")
 	}
-	sqlBuf.WriteString("(?, ?, ?, ?)")
+	sqlBuf.WriteString("(?, ?, ?, ?, ?)")
 	sql := sqlBuf.String()
 	stmt, err := db.Prepare(sql)
 	if err != nil {
@@ -297,7 +351,12 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 			// 	log.Fatalf("failed to parse instance ID in invalid SQL digest '%s', %v", records.SqlDigest, err)
 			// }
 			// log.Printf("parsed %d items\n", n)
-			values = append(values, string(records.SqlDigest), string(records.PlanDigest), ts, cpuTimeMs)
+			sep := strings.Split(string(records.SqlDigest), "_")
+			instanceID, err := strconv.Atoi(sep[0][1:])
+			if err != nil {
+				log.Fatalf("failed to parse instance ID in SQL digest '%s', %v", records.SqlDigest, err)
+			}
+			values = append(values, string(records.SqlDigest), string(records.PlanDigest), ts, cpuTimeMs, instanceID)
 		}
 
 		_, err = stmt.Exec(values...)
@@ -308,8 +367,8 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord) {
 	}
 }
 
-func writeSQLMetaTiDB(sqlMetaChan chan *tipb.SQLMeta) {
-	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+func writeSQLMetaTiDB(sqlMetaChan chan *tipb.SQLMeta, dsn string) {
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
@@ -331,8 +390,8 @@ func writeSQLMetaTiDB(sqlMetaChan chan *tipb.SQLMeta) {
 	}
 }
 
-func writePlanMetaTiDB(planMetaChan chan *tipb.PlanMeta) {
-	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+func writePlanMetaTiDB(planMetaChan chan *tipb.PlanMeta, dsn string) {
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
@@ -362,7 +421,8 @@ func WriteTiDB() {
 	go GenerateSQLMeta(sqlMetaChan)
 	go GeneratePlanMeta(planMetaChan)
 
-	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/test?charset=utf8")
+	dsn := "root:@tcp(127.0.0.1:4000)/test?charset=utf8"
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
@@ -373,6 +433,7 @@ func WriteTiDB() {
 		plan_digest VARBINARY(32),
 		timestamp INTEGER NOT NULL,
 		cpu_time_ms INTEGER NOT NULL,
+		instance_id INTEGER NOT NULL,
 		PRIMARY KEY (id)
 	);`); err != nil {
 		log.Fatalf("create table err: %v\n", err)
@@ -403,9 +464,9 @@ func WriteTiDB() {
 		log.Fatalf("set tiflash replica err: %v\n", err)
 	}
 	for i := 0; i < writeWorkerNum; i++ {
-		// go writeCPUTimeRecordsTiDB(recordChan)
-		go writeSQLMetaTiDB(sqlMetaChan)
-		go writePlanMetaTiDB(planMetaChan)
+		go writeCPUTimeRecordsTiDB(recordChan, dsn)
+		go writeSQLMetaTiDB(sqlMetaChan, dsn)
+		go writePlanMetaTiDB(planMetaChan, dsn)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)

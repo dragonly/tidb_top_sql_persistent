@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"log"
+	"time"
 
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
 	"github.com/spf13/cobra"
@@ -32,14 +33,17 @@ var queryCmd = &cobra.Command{
 	Short: "query data for test",
 	Long:  `This command runs query to test different database targets`,
 	Run: func(cmd *cobra.Command, args []string) {
+		now := time.Now()
 		log.Println("start query")
 		switch *queryTarget {
 		case "influxdb":
 			app.QueryInfluxDB()
 		case "tidb":
+			app.QueryTiDB()
 		default:
 			log.Fatalf("Unsupported target [%s]\n", *queryTarget)
 		}
+		log.Printf("query time: %dms\n", time.Since(now)/time.Millisecond)
 	},
 }
 
