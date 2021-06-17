@@ -26,6 +26,9 @@ import (
 
 var (
 	queryTarget *string
+	workers     *int
+	queryNum    *int
+	randomQuery *bool
 )
 
 // queryCmd represents the query command
@@ -34,7 +37,7 @@ var queryCmd = &cobra.Command{
 	Short: "query data for test",
 	Long:  `This command runs query to test different database targets`,
 	Run: func(cmd *cobra.Command, args []string) {
-		log.Println("start query")
+		log.Println("start to query database")
 		now := time.Now()
 		switch *queryTarget {
 		case "influxdb":
@@ -42,16 +45,19 @@ var queryCmd = &cobra.Command{
 		case "tidb":
 			dsn := viper.GetString("dsn")
 			log.Printf("dsn: %s\n", dsn)
-			app.QueryTiDB(dsn)
+			app.QueryTiDB(dsn, *workers, *queryNum, *randomQuery)
 		default:
 			log.Fatalf("Unsupported target [%s]\n", *queryTarget)
 		}
-		log.Printf("query time: %dms\n", time.Since(now)/time.Millisecond)
+		log.Printf("total query time: %ds\n", time.Since(now)/time.Second)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
 
-	queryTarget = queryCmd.Flags().StringP("target", "t", "influxdb", "select the data generation target database, supports influxdb|tidb")
+	queryTarget = queryCmd.Flags().StringP("target", "t", "tidb", "select the data generation target database, supports tidb|influxdb")
+	workers = queryCmd.Flags().Int("workers", 1, "specify how many concurrent workers are executing queries at the same time")
+	queryNum = queryCmd.Flags().Int("queries", 1, "specify total queries")
+	randomQuery = queryCmd.Flags().Bool("random", false, "randomize generated query parameters")
 }

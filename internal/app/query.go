@@ -21,6 +21,13 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math/rand"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	influxdb "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
@@ -68,16 +75,51 @@ func QueryInfluxDB() {
 	queryInfluxDB(queryAPI, 0, 60*60, 1)
 }
 
-func QueryTiDB(dsn string) {
+func QueryTiDB(dsn string, workers, queryNum int, randomQuery bool) {
+	if randomQuery {
+		rand.Seed(time.Now().Unix())
+	}
+	log.Printf("workers: %d, queryNum: %d, randomQuery: %t\n", workers, queryNum, randomQuery)
+
+	var wg sync.WaitGroup
+	workCount := int32(queryNum)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go queryTiDBWorker(&wg, &workCount, dsn, randomQuery, 0, 3600*24, 300, 0, 5)
+	}
+	wg.Wait()
+}
+
+// the worker could do more work than workCount, because of the unprotected check-and-set behavior
+func queryTiDBWorker(wg *sync.WaitGroup, workCount *int32, dsn string, randomQuery bool, startTs, endTs, interval, instance_id, top_n int) {
+	log.Printf("[%d] start worker\n", getGoroutineID())
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
 	defer db.Close()
-
-	queryTiDB(db, 0, 3600*24, 300, 0, 5)
+	for {
+		if atomic.LoadInt32(workCount) <= 0 {
+			break
+		}
+		atomic.AddInt32(workCount, -1)
+		if randomQuery {
+			duration := (endTs - startTs) * int(0.5+0.5*rand.Float32())
+			endTs = startTs + duration
+			interval *= int(0.5 + rand.Float32())
+			instance_id = int(rand.Float32() * instanceNum)
+			top_n *= int(0.5 + rand.Float32())
+		}
+		log.Printf("[%d] start query\n", getGoroutineID())
+		now := time.Now()
+		queryTiDB(db, startTs, endTs, interval, instance_id, top_n)
+		log.Printf("[%d] finish query in %dms\n", getGoroutineID(), time.Since(now).Milliseconds())
+	}
+	wg.Done()
+	log.Printf("[%d] stop worker\n", getGoroutineID())
 }
 
+// TODO: join with sql/plan meta
 func queryTiDB(db *sql.DB, startTs, endTs, interval, instance_id, top_n int) {
 	sql := `
 	SELECT *
@@ -106,4 +148,15 @@ func queryTiDB(db *sql.DB, startTs, endTs, interval, instance_id, top_n int) {
 		// log.Printf("row: %d, %d\n", cpu_time_count, minute)
 	}
 	log.Println("query success")
+}
+
+func getGoroutineID() int {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	idField := strings.Fields(strings.TrimPrefix(string(buf[:n]), "goroutine "))[0]
+	id, err := strconv.Atoi(idField)
+	if err != nil {
+		panic(fmt.Sprintf("cannot get goroutine id: %v", err))
+	}
+	return id
 }
