@@ -29,32 +29,41 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/resource_usage_agent"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
 
 // gRPC server
 var _ tipb.TopSQLAgentServer = &monkeyServer{}
+var _ resource_usage_agent.ResourceUsageAgentServer = &monkeyServer{}
 
 type monkeyServer struct{}
 
 func (*monkeyServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
-	log.Println("call ReportPlanMeta()")
+	log.Println("TiDB called ReportPlanMeta()")
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
 }
 
 func (*monkeyServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
-	log.Println("call ReportSQLMeta()")
+	log.Println("TiDB called ReportSQLMeta()")
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
 }
 
 func (*monkeyServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	log.Println("call ReportCPUTimeRecords()")
+	log.Println("TiDB called ReportCPUTimeRecords()")
 	resp := &tipb.EmptyResponse{}
+	stream.SendAndClose(resp)
+	return nil
+}
+
+func (s *monkeyServer) ReportCpuTime(stream resource_usage_agent.ResourceUsageAgent_ReportCpuTimeServer) error {
+	log.Println("TiKV called ReportCpuTime()")
+	resp := &resource_usage_agent.ReportCpuTimeResponse{}
 	stream.SendAndClose(resp)
 	return nil
 }
@@ -153,8 +162,11 @@ func StartMonkeyServer(proxyAddress string) {
 	log.Printf("[gRPC] start listening on %s:%d", addrGRPC.IP, addrGRPC.Port)
 
 	server := grpc.NewServer()
-	tipb.RegisterTopSQLAgentServer(server, &monkeyServer{})
+	service := monkeyServer{}
+	tipb.RegisterTopSQLAgentServer(server, &service)
+	resource_usage_agent.RegisterResourceUsageAgentServer(server, &service)
 	log.Printf("[gRPC] start gRPC server")
+
 	go func() {
 		if err := server.Serve(lisGRPC); err != nil {
 			log.Fatalf("failed to start gRPC server: %v", err)
