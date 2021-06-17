@@ -39,7 +39,7 @@ const (
 	sqlNum         = 200
 	instanceNum    = 100
 	startTs        = 0
-	endTs          = 60 * 60 * 1
+	endTs          = 60 * 60 * 24
 	writeWorkerNum = 5
 )
 
@@ -48,7 +48,7 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 	lastCount := 0
 	lastTime := time.Now()
 	qps := 0
-	for minute := startTs; minute < endTs/60; minute++ {
+	for minute := startTs / 60; minute < endTs/60; minute++ {
 		log.Printf("[cpu time] timestamp: %d\n", minute*60)
 		for i := 0; i < instanceNum; i++ {
 			for j := 0; j < sqlNum; j++ {
@@ -66,7 +66,7 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 				}
 				count++
 				if count%100 == 0 {
-					log.Printf("[cpu time] generated %d records, qps %d\n", count, qps)
+					log.Printf("[cpu time] generated %d batches (%d records), qps %d\n", count, count*60, qps)
 					now := time.Now()
 					duration := now.Sub(lastTime)
 					if duration > time.Second {
@@ -281,44 +281,44 @@ func QueryInfluxDB() {
 	queryInfluxDB(queryAPI, 0, 60*60, 1)
 }
 
-func QueryTiDB() {
-	dsn := "root:@tcp(127.0.0.1:4000)/test?charset=utf8"
+func QueryTiDB(dsn string) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
 	defer db.Close()
 
-	queryTiDB(db, 0, 60, 0)
+	queryTiDB(db, 0, 3600*24, 300, 0, 5)
 }
 
-func queryTiDB(db *sql.DB, startTs, endTs, instance_id int) {
+func queryTiDB(db *sql.DB, startTs, endTs, interval, instance_id, top_n int) {
 	sql := `
 	SELECT *
 	FROM (SELECT *, RANK() OVER (PARTITION BY topsql.time_window ORDER BY topsql.cpu_time_sum DESC ) AS rk
-		FROM (SELECT instance_id, sql_digest, floor(timestamp / 60) AS time_window, sum(cpu_time_ms) AS cpu_time_sum
+		FROM (SELECT instance_id, sql_digest, floor(timestamp / %d) AS time_window, sum(cpu_time_ms) AS cpu_time_sum
 			FROM cpu_time
 			WHERE timestamp >= %d
 				AND timestamp < %d
 				AND instance_id = %d
 			GROUP BY time_window, sql_digest) topsql) sql_ranked
-	WHERE sql_ranked.rk <= 5
+	WHERE sql_ranked.rk <= %d
 	`
-	sql = fmt.Sprintf(sql, startTs, endTs, instance_id)
+	sql = fmt.Sprintf(sql, interval, startTs, endTs, instance_id, top_n)
 	rows, err := db.Query(sql)
 	if err != nil {
 		log.Fatalf("failed to query TiDB, %v", err)
 	}
 	defer rows.Close()
-	log.Println("cpu_time: cpu_time_count, minute")
+	// log.Println("cpu_time: cpu_time_count, minute")
 	for rows.Next() {
-		var cpu_time_count int
-		var minute int
-		if err := rows.Scan(&cpu_time_count, &minute); err != nil {
+		var instanceID, timeWindow, cpuTimeMsSum, rank int
+		var sqlDigest string
+		if err := rows.Scan(&instanceID, &sqlDigest, &timeWindow, &cpuTimeMsSum, &rank); err != nil {
 			log.Fatalf("failed to iterate rows, %v", err)
 		}
-		log.Printf("row: %d, %d\n", cpu_time_count, minute)
+		// log.Printf("row: %d, %d\n", cpu_time_count, minute)
 	}
+	log.Println("query success")
 }
 
 func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord, dsn string) {
@@ -413,7 +413,7 @@ func writePlanMetaTiDB(planMetaChan chan *tipb.PlanMeta, dsn string) {
 	}
 }
 
-func WriteTiDB() {
+func WriteTiDB(dsn string) {
 	recordChan := make(chan *tipb.CPUTimeRecord, writeWorkerNum*2)
 	sqlMetaChan := make(chan *tipb.SQLMeta, writeWorkerNum*2)
 	planMetaChan := make(chan *tipb.PlanMeta, writeWorkerNum*2)
@@ -421,7 +421,6 @@ func WriteTiDB() {
 	go GenerateSQLMeta(sqlMetaChan)
 	go GeneratePlanMeta(planMetaChan)
 
-	dsn := "root:@tcp(127.0.0.1:4000)/test?charset=utf8"
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)

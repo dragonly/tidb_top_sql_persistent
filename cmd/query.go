@@ -21,6 +21,7 @@ import (
 
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -33,13 +34,15 @@ var queryCmd = &cobra.Command{
 	Short: "query data for test",
 	Long:  `This command runs query to test different database targets`,
 	Run: func(cmd *cobra.Command, args []string) {
-		now := time.Now()
 		log.Println("start query")
+		now := time.Now()
 		switch *queryTarget {
 		case "influxdb":
 			app.QueryInfluxDB()
 		case "tidb":
-			app.QueryTiDB()
+			dsn := viper.GetString("dsn")
+			log.Printf("dsn: %s\n", dsn)
+			app.QueryTiDB(dsn)
 		default:
 			log.Fatalf("Unsupported target [%s]\n", *queryTarget)
 		}

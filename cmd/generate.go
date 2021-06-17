@@ -20,6 +20,7 @@ import (
 
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -36,7 +37,9 @@ var generateCmd = &cobra.Command{
 		case "influxdb":
 			app.WriteInfluxDB()
 		case "tidb":
-			app.WriteTiDB()
+			dsn := viper.GetString("dsn")
+			log.Printf("dsn: %s\n", dsn)
+			app.WriteTiDB(dsn)
 		default:
 			log.Fatalf("Unsupported target [%s]\n", *generateTarget)
 		}

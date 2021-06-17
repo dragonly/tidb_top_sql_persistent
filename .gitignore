@@ -2,3 +2,5 @@
 *.test
 *.profile
 rust/target
+
+config.yaml
