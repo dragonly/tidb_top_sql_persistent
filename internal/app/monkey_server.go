@@ -42,6 +42,17 @@ type monkeyServer struct{}
 
 func (*monkeyServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
 	log.Println("TiDB called ReportPlanMeta()")
+	count := 0
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		count += 1;
+	}
+	log.Printf("received # of tidb plan meta: %v\n", count)
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
@@ -49,6 +60,17 @@ func (*monkeyServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer
 
 func (*monkeyServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
 	log.Println("TiDB called ReportSQLMeta()")
+	count := 0
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		count += 1;
+	}
+	log.Printf("received # of tidb sql meta: %v\n", count)
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
@@ -56,6 +78,17 @@ func (*monkeyServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) 
 
 func (*monkeyServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
 	log.Println("TiDB called ReportCPUTimeRecords()")
+	count := 0
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		count += 1;
+	}
+	log.Printf("received # of tidb cpu time: %v\n", count)
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
 	return nil
@@ -63,6 +96,18 @@ func (*monkeyServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeR
 
 func (s *monkeyServer) ReportCpuTime(stream resource_usage_agent.ResourceUsageAgent_ReportCpuTimeServer) error {
 	log.Println("TiKV called ReportCpuTime()")
+	count := 0
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		count += 1;
+	}
+	log.Printf("received # of tikv cpu time: %v\n", count)
+
 	resp := &resource_usage_agent.ReportCpuTimeResponse{}
 	stream.SendAndClose(resp)
 	return nil
