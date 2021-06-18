@@ -97,6 +97,7 @@ func queryTiDBWorker(wg *sync.WaitGroup, workCount *int32, dsn string, randomQue
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
+	db.Exec("set @@session.tidb_isolation_read_engines = \"tidb, tiflash\"")
 	defer db.Close()
 	for {
 		if atomic.LoadInt32(workCount) <= 0 {

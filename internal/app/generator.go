@@ -352,7 +352,8 @@ func WriteTiDB(dsn string) {
 		cpu_time_ms INTEGER NOT NULL,
 		instance_id INTEGER NOT NULL,
 		PRIMARY KEY (id)
-	);`); err != nil {
+		);`); err != nil {
+		// INDEX idx_instid_ts (instance_id, timestamp)
 		log.Fatalf("create table err: %v\n", err)
 	}
 	if _, err = db.Exec("ALTER TABLE cpu_time SET TIFLASH REPLICA 1;"); err != nil {
