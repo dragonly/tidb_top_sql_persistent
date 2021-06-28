@@ -33,8 +33,8 @@ const (
 type ringBuffer struct {
 	mu         sync.Mutex
 	buf        []interface{}
-	capacity   int32
-	start, end int32
+	capacity   uint32
+	start, end uint32
 }
 
 func (r *ringBuffer) Write(data interface{}) {
@@ -48,17 +48,23 @@ func (r *ringBuffer) Write(data interface{}) {
 	r.end = newEnd
 }
 
-func (r *ringBuffer) RemoveFromStart() {
+func (r *ringBuffer) ReadMulti(count uint32) []interface{} {
+	return r.buf[r.start : r.start+count]
+}
+
+func (r *ringBuffer) RemoveFromStart(count uint32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.start = (r.start + 1) % r.capacity
+	r.start = (r.start + count) % r.capacity
 }
 
 type WAL interface {
 	WriteMulti([]interface{})
-	ReadNext() interface{}
-	Acknowledge(uint32)
+	ReadMulti(count uint32) []interface{}
+	Acknowledge(count uint32)
 }
+
+var _ WAL = &MemWAL{}
 
 type MemWAL struct {
 	ring ringBuffer
@@ -81,12 +87,12 @@ func (wal *MemWAL) WriteMulti(data []interface{}) {
 	}
 }
 
-func (wal *MemWAL) ReadNext() interface{} {
-	return nil
+func (wal *MemWAL) ReadMulti(count uint32) []interface{} {
+	return wal.ring.ReadMulti(count)
 }
 
 func (wal *MemWAL) Acknowledge(count uint32) {
-
+	wal.ring.RemoveFromStart(count)
 }
 
 type DiskWAL struct {

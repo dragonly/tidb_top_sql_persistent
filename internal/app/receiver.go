@@ -20,31 +20,39 @@ import "github.com/pingcap/tipb/go-tipb"
 
 // TODO: add back pressure to ensure memory not growing to da moon
 type Receiver struct {
-	// the following lists are used to buffer received lists, which should be written to WAL in batch
-	CPUTimeRecordList []*tipb.CPUTimeRecord
-	SQLMetaList       []*tipb.SQLMeta
-	PlanMetaList      []*tipb.PlanMeta
+	wal WAL
+	// senderJobChan is used to notify sender thread of incomming data
+	senderJobChan chan struct{}
 }
 
-func NewReceiver() *Receiver {
+func NewReceiver(wal WAL, senderJobChan chan struct{}) *Receiver {
 	return &Receiver{
-		CPUTimeRecordList: make([]*tipb.CPUTimeRecord, 0, 100),
-		SQLMetaList:       make([]*tipb.SQLMeta, 0, 100),
-		PlanMetaList:      make([]*tipb.PlanMeta, 0, 100),
+		wal:           wal,
+		senderJobChan: senderJobChan,
+	}
+}
+
+func (r *Receiver) notifySenderNonblocking() {
+	select {
+	case r.senderJobChan <- struct{}{}:
+	default:
 	}
 }
 
 func (r *Receiver) receiveCPUTimeRecords(record *tipb.CPUTimeRecord) {
-	r.CPUTimeRecordList = append(r.CPUTimeRecordList, record)
-	// write to WAL in batch
+	// TODO: write to WAL in batch
+	r.wal.WriteMulti([]interface{}{record})
+	r.notifySenderNonblocking()
 }
 
 func (r *Receiver) receiveSQLMeta(meta *tipb.SQLMeta) {
-	r.SQLMetaList = append(r.SQLMetaList, meta)
-	// write to WAL in batch
+	// TODO: write to WAL in batch
+	r.wal.WriteMulti([]interface{}{meta})
+	r.notifySenderNonblocking()
 }
 
 func (r *Receiver) receivePlanMeta(meta *tipb.PlanMeta) {
-	r.PlanMetaList = append(r.PlanMetaList, meta)
-	// write to WAL in batch
+	// TODO: write to WAL in batch
+	r.wal.WriteMulti([]interface{}{meta})
+	r.notifySenderNonblocking()
 }

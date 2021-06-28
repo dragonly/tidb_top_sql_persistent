@@ -27,18 +27,26 @@ import (
 
 var _ tipb.TopSQLAgentServer = &agentServer{}
 
-type agentServer struct{}
-
-func (*agentServer) ReportPlanMeta(tipb.TopSQLAgent_ReportPlanMetaServer) error {
-	return nil
+type agentServer struct {
+	receiver *Receiver
+	sender   *Sender
 }
 
-func (*agentServer) ReportSQLMeta(tipb.TopSQLAgent_ReportSQLMetaServer) error {
-	return nil
+func NewAgentServer(wal WAL) *agentServer {
+	senderJobChan := make(chan struct{}, 1)
+	receiver := NewReceiver(wal, senderJobChan)
+	sender := NewSender(wal, senderJobChan)
+	return &agentServer{
+		receiver: receiver,
+		sender:   sender,
+	}
 }
 
-func (*agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	log.Print("start collecting from tidb-server")
+func (as *agentServer) Start() {
+	go as.sender.start()
+}
+
+func (as *agentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -46,7 +54,37 @@ func (*agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRe
 		} else if err != nil {
 			return err
 		}
-		log.Printf("received: %v\n", req)
+		as.receiver.receivePlanMeta(req)
+	}
+	resp := &tipb.EmptyResponse{}
+	stream.SendAndClose(resp)
+	return nil
+}
+
+func (as *agentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		as.receiver.receiveSQLMeta(req)
+	}
+	resp := &tipb.EmptyResponse{}
+	stream.SendAndClose(resp)
+	return nil
+}
+
+func (as *agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		as.receiver.receiveCPUTimeRecords(req)
 	}
 	resp := &tipb.EmptyResponse{}
 	stream.SendAndClose(resp)
@@ -60,7 +98,8 @@ func StartServer() {
 		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
 	}
 	server := grpc.NewServer()
-	tipb.RegisterTopSQLAgentServer(server, &agentServer{})
+	wal := NewMemWAL()
+	tipb.RegisterTopSQLAgentServer(server, NewAgentServer(wal))
 
 	log.Printf("start listening on %s", addr)
 	if err := server.Serve(lis); err != nil {

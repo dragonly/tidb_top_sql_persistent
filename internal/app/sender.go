@@ -24,33 +24,53 @@ import (
 
 type Store interface {
 	WriteCPURecordMulti()
+	WriteSQLMetaMulti()
+	WritePlanMetaMulti()
 }
 
 type TiDB struct {
 }
 
 func (tidb *TiDB) WriteCPURecordMulti() {
+}
 
+func (tidb *TiDB) WriteSQLMetaMulti() {
+}
+
+func (tidb *TiDB) WritePlanMetaMulti() {
 }
 
 type Sender struct {
-	store Store
-	wal   WAL
+	store         Store
+	wal           WAL
+	senderJobChan chan struct{}
 }
 
-func NewSender() *Sender {
-	return &Sender{}
+func NewSender(wal WAL, senderJobChan chan struct{}) *Sender {
+	return &Sender{
+		wal:           wal,
+		senderJobChan: senderJobChan,
+	}
 }
 
-// sendNext sends the next record from WAL
-func (s *Sender) sendNext() {
-	next := s.wal.ReadNext()
-	switch t := next.(type) {
+func (s *Sender) start() {
+	for {
+		s.sendNextBatch()
+	}
+}
+
+// sendNextBatch sends the next batch of records from WAL
+func (s *Sender) sendNextBatch() {
+	// TODO: send batch
+	next := s.wal.ReadMulti(1)[0]
+	switch tp := next.(type) {
 	case tipb.CPUTimeRecord:
-
+		s.store.WriteCPURecordMulti()
 	case tipb.SQLMeta:
+		s.store.WriteSQLMetaMulti()
 	case tipb.PlanMeta:
+		s.store.WritePlanMetaMulti()
 	default:
-		panic(fmt.Sprintf("unexpected type %v", t))
+		panic(fmt.Sprintf("unexpected type %v", tp))
 	}
 }
