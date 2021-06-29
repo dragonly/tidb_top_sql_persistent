@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"time"
+
 	"github.com/spf13/cobra"
 
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
@@ -28,7 +30,8 @@ var serverCmd = &cobra.Command{
 	Short: "start agent server",
 	Long:  `This will start the gRPC server of the data collection agent.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		app.StartServer()
+		app.StartGrpcServer("")
+		time.Sleep(time.Hour * 24 * 365)
 	},
 }
 

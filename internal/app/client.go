@@ -65,23 +65,26 @@ func (s *tidbSender) sendBatch(batch []*tipb.CPUTimeRecord) {
 	log.Printf("received stream response: %v", resp)
 }
 
-func SendRequest() {
-	addr := "localhost:23333"
+func newGrpcClient(ctx context.Context, addr string) (*grpc.ClientConn, *tidbSender) {
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("connecting server failed: %v", err)
 	}
-	defer conn.Close()
-	c := tipb.NewTopSQLAgentClient(conn)
-	ctx, cancel := context.WithTimeout(dialCtx, time.Second)
-	defer cancel()
-	stream, err := c.ReportCPUTimeRecords(ctx)
+	grpcClient := tipb.NewTopSQLAgentClient(conn)
+	stream, err := grpcClient.ReportCPUTimeRecords(ctx)
 	if err != nil {
 		log.Fatalf("open stream failed: %v", err)
 	}
 
 	tidbSender := NewTiDBSender(stream)
-	tidbSender.Start()
+	return conn, tidbSender
+}
+
+func SendRequest() {
+	addr := "localhost:23333"
+	conn, sender := newGrpcClient(context.TODO(), addr)
+	sender.Start()
+	conn.Close()
 }

@@ -20,39 +20,31 @@ import "github.com/pingcap/tipb/go-tipb"
 
 // TODO: add back pressure to ensure memory not growing to da moon
 type Receiver struct {
-	wal WAL
-	// senderJobChan is used to notify sender thread of incomming data
-	senderJobChan chan struct{}
+	wal        WAL
+	prefetcher *Prefetcher
 }
 
-func NewReceiver(wal WAL, senderJobChan chan struct{}) *Receiver {
+func NewReceiver(wal WAL, prefetcher *Prefetcher) *Receiver {
 	return &Receiver{
-		wal:           wal,
-		senderJobChan: senderJobChan,
-	}
-}
-
-func (r *Receiver) notifySenderNonblocking() {
-	select {
-	case r.senderJobChan <- struct{}{}:
-	default:
+		wal:        wal,
+		prefetcher: prefetcher,
 	}
 }
 
 func (r *Receiver) receiveCPUTimeRecords(record *tipb.CPUTimeRecord) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{record})
-	r.notifySenderNonblocking()
+	r.prefetcher.WriteToBuffer(record)
 }
 
 func (r *Receiver) receiveSQLMeta(meta *tipb.SQLMeta) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{meta})
-	r.notifySenderNonblocking()
+	r.prefetcher.WriteToBuffer(meta)
 }
 
 func (r *Receiver) receivePlanMeta(meta *tipb.PlanMeta) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{meta})
-	r.notifySenderNonblocking()
+	r.prefetcher.WriteToBuffer(meta)
 }

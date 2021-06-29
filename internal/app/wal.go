@@ -25,6 +25,7 @@ import (
 type Type uint8
 
 const (
+	// TODO: this needs to be rearranged to fit any collecting interval larger than 1s
 	TypeCPUTimeRecord Type = iota
 	TypeSQLMeta
 	TypePlanMeta
@@ -44,7 +45,7 @@ func (r *ringBuffer) Write(data interface{}) {
 	if newEnd == r.start {
 		return
 	}
-	r.buf[newEnd] = data
+	r.buf[r.end] = data
 	r.end = newEnd
 }
 
@@ -59,8 +60,8 @@ func (r *ringBuffer) RemoveFromStart(count uint32) {
 }
 
 type WAL interface {
-	WriteMulti([]interface{})
-	ReadMulti(count uint32) []interface{}
+	WriteMulti(interface{})
+	ReadMulti(count uint32) interface{}
 	Acknowledge(count uint32)
 }
 
@@ -81,13 +82,13 @@ func NewMemWAL() *MemWAL {
 	}
 }
 
-func (wal *MemWAL) WriteMulti(data []interface{}) {
-	for _, d := range data {
+func (wal *MemWAL) WriteMulti(data interface{}) {
+	for _, d := range data.([]interface{}) {
 		wal.ring.Write(d)
 	}
 }
 
-func (wal *MemWAL) ReadMulti(count uint32) []interface{} {
+func (wal *MemWAL) ReadMulti(count uint32) interface{} {
 	return wal.ring.ReadMulti(count)
 }
 

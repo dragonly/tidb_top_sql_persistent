@@ -17,60 +17,72 @@ limitations under the License.
 package app
 
 import (
-	"fmt"
+	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 type Store interface {
-	WriteCPURecordMulti()
-	WriteSQLMetaMulti()
-	WritePlanMetaMulti()
+	WriteCPUTimeRecord(*tipb.CPUTimeRecord)
+	WriteSQLMeta(*tipb.SQLMeta)
+	WritePlanMeta(*tipb.PlanMeta)
 }
 
-type TiDB struct {
+// MemStore is for testing purpose
+type MemStore struct {
+	cpuTimeRecordList []*tipb.CPUTimeRecord
+	sqlMetaList       []*tipb.SQLMeta
+	planMeta          []*tipb.PlanMeta
 }
 
-func (tidb *TiDB) WriteCPURecordMulti() {
+func NewMemStore() *MemStore {
+	return &MemStore{}
 }
 
-func (tidb *TiDB) WriteSQLMetaMulti() {
+func (s *MemStore) WriteCPUTimeRecord(records *tipb.CPUTimeRecord) {
+	s.cpuTimeRecordList = append(s.cpuTimeRecordList, records)
 }
 
-func (tidb *TiDB) WritePlanMetaMulti() {
+func (s *MemStore) WriteSQLMeta(meta *tipb.SQLMeta) {
+	s.sqlMetaList = append(s.sqlMetaList, meta)
+}
+
+func (s *MemStore) WritePlanMeta(meta *tipb.PlanMeta) {
+	s.planMeta = append(s.planMeta, meta)
 }
 
 type Sender struct {
-	store         Store
-	wal           WAL
-	senderJobChan chan struct{}
+	prefetcher *Prefetcher
+	store      Store
 }
 
-func NewSender(wal WAL, senderJobChan chan struct{}) *Sender {
+func NewSender(prefetcher *Prefetcher, store Store) *Sender {
 	return &Sender{
-		wal:           wal,
-		senderJobChan: senderJobChan,
+		prefetcher: prefetcher,
+		store:      store,
 	}
 }
 
 func (s *Sender) start() {
 	for {
-		s.sendNextBatch()
+		s.sendNext()
+		time.Sleep(time.Millisecond)
 	}
 }
 
-// sendNextBatch sends the next batch of records from WAL
-func (s *Sender) sendNextBatch() {
+// sendNext sends the next batch of records from WAL
+func (s *Sender) sendNext() {
 	// TODO: send batch
-	next := s.wal.ReadMulti(1)[0]
-	switch tp := next.(type) {
-	case tipb.CPUTimeRecord:
-		s.store.WriteCPURecordMulti()
-	case tipb.SQLMeta:
-		s.store.WriteSQLMetaMulti()
-	case tipb.PlanMeta:
-		s.store.WritePlanMetaMulti()
-	default:
-		panic(fmt.Sprintf("unexpected type %v", tp))
+	if record := s.prefetcher.readOneCPUTimeRecordOrNil(); record != nil {
+		s.store.WriteCPUTimeRecord(record)
+		s.prefetcher.RemoveOneCPUTimeRecordAtFront()
+	}
+	if sqlMeta := s.prefetcher.readOneSQLMetaOrNil(); sqlMeta != nil {
+		s.store.WriteSQLMeta(sqlMeta)
+		s.prefetcher.RemoveOneSQLMetaAtFront()
+	}
+	if planMeta := s.prefetcher.readOnePlanMetaOrNil(); planMeta != nil {
+		s.store.WritePlanMeta(planMeta)
+		s.prefetcher.RemoveOnePlanMetaAtFront()
 	}
 }

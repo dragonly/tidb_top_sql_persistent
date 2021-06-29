@@ -25,28 +25,44 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ tipb.TopSQLAgentServer = &agentServer{}
+var _ tipb.TopSQLAgentServer = &TopSQLAgentServer{}
 
-type agentServer struct {
+// TopSQLAgentServer is the main struct which controls the Top SQL metrics collecting and reporting.
+//
+// In general, there are several parts in the agent which are working together:
+// - gRPC server receives raw data from tidb-server/tikv-server
+// - receiver writes gRPC data to WAL, which typically resides in the disk. There're also in-memory
+//   implementations which is used in testing.
+// - WAL-buffer-prefetcher prefetches WAL data to an in-memory buffer, which is a sliding-window-like
+//   in-memory view of the WAL data. The prefetch buffer has an upper limit, which can be seemed as
+//   the max window size of the view.
+// - sender reads data from prefetched buffer, and asynchronously sends it to the remote store.
+//
+// When the data is receiving and sending quickly enough, the data will only be written to WAL once, and
+// served directly to the sender from receiver in memory, which is IO efficient.
+// When the agent process crashes, it will re-construct the prefetch buffer, and restarts sending data
+// to the store as usual.
+// After all, the prefetched buffer is the only source for data from which to get out of the agent process.
+type TopSQLAgentServer struct {
 	receiver *Receiver
 	sender   *Sender
 }
 
-func NewAgentServer(wal WAL) *agentServer {
-	senderJobChan := make(chan struct{}, 1)
-	receiver := NewReceiver(wal, senderJobChan)
-	sender := NewSender(wal, senderJobChan)
-	return &agentServer{
+func NewAgentServer(wal WAL, store Store) *TopSQLAgentServer {
+	prefetcher := NewPrefetcher(wal, 10*1024*1024)
+	receiver := NewReceiver(wal, prefetcher)
+	sender := NewSender(prefetcher, store)
+	return &TopSQLAgentServer{
 		receiver: receiver,
 		sender:   sender,
 	}
 }
 
-func (as *agentServer) Start() {
+func (as *TopSQLAgentServer) Start() {
 	go as.sender.start()
 }
 
-func (as *agentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
+func (as *TopSQLAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -61,7 +77,7 @@ func (as *agentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServ
 	return nil
 }
 
-func (as *agentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
+func (as *TopSQLAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -76,7 +92,8 @@ func (as *agentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer
 	return nil
 }
 
-func (as *agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+func (as *TopSQLAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+	log.Println("server: ReportCPUTimeRecords")
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -91,18 +108,26 @@ func (as *agentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTim
 	return nil
 }
 
-func StartServer() {
-	addr := ":23333"
+func StartGrpcServer(addr string) *TopSQLAgentServer {
+	if len(addr) == 0 {
+		addr = ":23333"
+	}
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen on tcp address %s, %v", addr, err)
 	}
 	server := grpc.NewServer()
 	wal := NewMemWAL()
-	tipb.RegisterTopSQLAgentServer(server, NewAgentServer(wal))
+	store := NewMemStore()
+	agentServer := NewAgentServer(wal, store)
+	agentServer.Start()
+	tipb.RegisterTopSQLAgentServer(server, agentServer)
 
 	log.Printf("start listening on %s", addr)
-	if err := server.Serve(lis); err != nil {
-		log.Fatalf("failed to start gRPC server: %v", err)
-	}
+	go func() {
+		if err := server.Serve(lis); err != nil {
+			log.Fatalf("failed to start gRPC server: %v", err)
+		}
+	}()
+	return agentServer
 }
