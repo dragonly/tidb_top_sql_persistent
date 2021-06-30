@@ -18,6 +18,7 @@ package app
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -25,20 +26,38 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTopSQLAgentServer(t *testing.T) {
+type CPUTimeRecordSortByFirst []*tipb.CPUTimeRecord
+
+func (a CPUTimeRecordSortByFirst) Len() int      { return len(a) }
+func (a CPUTimeRecordSortByFirst) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a CPUTimeRecordSortByFirst) Less(i, j int) bool {
+	return a[i].TimestampList[0] < a[j].TimestampList[0]
+}
+
+func TestSendData(t *testing.T) {
 	addr := "localhost:23333"
 	server := StartGrpcServer(addr)
 	conn, client := newGrpcClient(context.TODO(), addr)
 	defer conn.Close()
-	cpuTimeRecordBatch := []*tipb.CPUTimeRecord{
-		{
-			SqlDigest:     []byte("SQLDigest"),
-			PlanDigest:    []byte("PlanDigest"),
-			TimestampList: []uint64{uint64(1)},
-			CpuTimeMsList: []uint32{uint32(100)},
-		},
+	var cpuTimeRecordBatch []*tipb.CPUTimeRecord
+	count := 1000
+	for i := 0; i < count; i++ {
+		cpuTimeRecordBatch = append(cpuTimeRecordBatch,
+			&tipb.CPUTimeRecord{
+				SqlDigest:     []byte("SQLDigest"),
+				PlanDigest:    []byte("PlanDigest"),
+				TimestampList: []uint64{uint64(i)},
+				CpuTimeMsList: []uint32{uint32(i)},
+			},
+		)
 	}
 	client.sendBatch(cpuTimeRecordBatch)
+	// wait sender to send out the record
 	time.Sleep(10 * time.Millisecond)
-	assert.Equal(t, 1, len(server.sender.store.(*MemStore).cpuTimeRecordList))
+	cpuTimeRecordList := server.sender.store.(*MemStore).cpuTimeRecordList
+	sort.Sort(CPUTimeRecordSortByFirst(cpuTimeRecordList))
+	assert.Equal(t, count, len(cpuTimeRecordList))
+	for i := 0; i < count; i++ {
+		assert.Equal(t, *cpuTimeRecordBatch[i], *cpuTimeRecordList[i])
+	}
 }

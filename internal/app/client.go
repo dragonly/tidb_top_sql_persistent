@@ -25,18 +25,18 @@ import (
 	"google.golang.org/grpc"
 )
 
-type tidbSender struct {
+type Client struct {
 	stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient
 }
 
-func NewTiDBSender(stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient) *tidbSender {
-	return &tidbSender{
+func NewClient(stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient) *Client {
+	return &Client{
 		stream: stream,
 	}
 }
 
 // Start starts a goroutine, which sends tidb-server's last minute's data to the gRPC server
-func (s *tidbSender) Start() {
+func (s *Client) Start() {
 	var reqBatch []*tipb.CPUTimeRecord
 	for i := 0; i < 10; i++ {
 		req := &tipb.CPUTimeRecord{
@@ -51,9 +51,8 @@ func (s *tidbSender) Start() {
 	s.sendBatch(reqBatch)
 }
 
-func (s *tidbSender) sendBatch(batch []*tipb.CPUTimeRecord) {
+func (s *Client) sendBatch(batch []*tipb.CPUTimeRecord) {
 	for _, req := range batch {
-		req.TimestampList[0] += 1
 		if err := s.stream.Send(req); err != nil {
 			log.Fatalf("send stream request failed: %v", err)
 		}
@@ -65,7 +64,7 @@ func (s *tidbSender) sendBatch(batch []*tipb.CPUTimeRecord) {
 	log.Printf("received stream response: %v", resp)
 }
 
-func newGrpcClient(ctx context.Context, addr string) (*grpc.ClientConn, *tidbSender) {
+func newGrpcClient(ctx context.Context, addr string) (*grpc.ClientConn, *Client) {
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
@@ -78,7 +77,7 @@ func newGrpcClient(ctx context.Context, addr string) (*grpc.ClientConn, *tidbSen
 		log.Fatalf("open stream failed: %v", err)
 	}
 
-	tidbSender := NewTiDBSender(stream)
+	tidbSender := NewClient(stream)
 	return conn, tidbSender
 }
 

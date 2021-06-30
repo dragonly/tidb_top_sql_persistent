@@ -16,11 +16,13 @@ limitations under the License.
 
 package app
 
-import "github.com/pingcap/tipb/go-tipb"
+import (
+	"github.com/pingcap/tipb/go-tipb"
+)
 
 // TODO: add back pressure to ensure memory not growing to da moon
 type Receiver struct {
-	wal        WAL
+	wal        WAL // WAL is currently useless
 	prefetcher *Prefetcher
 }
 
@@ -34,17 +36,17 @@ func NewReceiver(wal WAL, prefetcher *Prefetcher) *Receiver {
 func (r *Receiver) receiveCPUTimeRecords(record *tipb.CPUTimeRecord) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{record})
-	r.prefetcher.WriteToBuffer(record)
+	r.prefetcher.WriteOneCPUTimeRecordOrDrop(record)
 }
 
 func (r *Receiver) receiveSQLMeta(meta *tipb.SQLMeta) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{meta})
-	r.prefetcher.WriteToBuffer(meta)
+	r.prefetcher.WriteOneSQLMetaOrDrop(meta)
 }
 
 func (r *Receiver) receivePlanMeta(meta *tipb.PlanMeta) {
 	// TODO: write to WAL in batch
 	r.wal.WriteMulti([]interface{}{meta})
-	r.prefetcher.WriteToBuffer(meta)
+	r.prefetcher.WriteOnePlanMetaOrDrop(meta)
 }

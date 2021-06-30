@@ -17,8 +17,6 @@ limitations under the License.
 package app
 
 import (
-	"time"
-
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -64,25 +62,22 @@ func NewSender(prefetcher *Prefetcher, store Store) *Sender {
 }
 
 func (s *Sender) start() {
+	// TODO: wait for a channel or timer
 	for {
 		s.sendNext()
-		time.Sleep(time.Millisecond)
 	}
 }
 
 // sendNext sends the next batch of records from WAL
 func (s *Sender) sendNext() {
 	// TODO: send batch
-	if record := s.prefetcher.readOneCPUTimeRecordOrNil(); record != nil {
+	if record := s.prefetcher.ReadOneCPUTimeRecordOrNil(); record != nil {
 		s.store.WriteCPUTimeRecord(record)
-		s.prefetcher.RemoveOneCPUTimeRecordAtFront()
 	}
-	if sqlMeta := s.prefetcher.readOneSQLMetaOrNil(); sqlMeta != nil {
+	if sqlMeta := s.prefetcher.ReadOneSQLMetaOrNil(); sqlMeta != nil {
 		s.store.WriteSQLMeta(sqlMeta)
-		s.prefetcher.RemoveOneSQLMetaAtFront()
 	}
-	if planMeta := s.prefetcher.readOnePlanMetaOrNil(); planMeta != nil {
+	if planMeta := s.prefetcher.ReadOnePlanMetaOrNil(); planMeta != nil {
 		s.store.WritePlanMeta(planMeta)
-		s.prefetcher.RemoveOnePlanMetaAtFront()
 	}
 }
