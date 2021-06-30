@@ -74,29 +74,14 @@ func (p *Prefetcher) WriteOnePlanMetaOrDrop(meta *tipb.PlanMeta) {
 	}
 }
 
-func (p *Prefetcher) ReadOneCPUTimeRecordOrNil() *tipb.CPUTimeRecord {
-	var record *tipb.CPUTimeRecord
-	select {
-	case record = <-p.buf.cpuTimeRecordChan:
-	default:
-	}
-	return record
+func (p *Prefetcher) ReadOneCPUTimeRecord() *tipb.CPUTimeRecord {
+	return <-p.buf.cpuTimeRecordChan
 }
 
 func (p *Prefetcher) ReadOneSQLMetaOrNil() *tipb.SQLMeta {
-	var meta *tipb.SQLMeta
-	select {
-	case meta = <-p.buf.sqlMetaChan:
-	default:
-	}
-	return meta
+	return <-p.buf.sqlMetaChan
 }
 
 func (p *Prefetcher) ReadOnePlanMetaOrNil() *tipb.PlanMeta {
-	var meta *tipb.PlanMeta
-	select {
-	case meta = <-p.buf.planMetaChan:
-	default:
-	}
-	return meta
+	return <-p.buf.planMetaChan
 }

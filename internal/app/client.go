@@ -26,12 +26,20 @@ import (
 )
 
 type Client struct {
-	stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient
+	cpuTimeRecordStream tipb.TopSQLAgent_ReportCPUTimeRecordsClient
+	sqlMetaStream       tipb.TopSQLAgent_ReportSQLMetaClient
+	planMetaStream      tipb.TopSQLAgent_ReportPlanMetaClient
 }
 
-func NewClient(stream tipb.TopSQLAgent_ReportCPUTimeRecordsClient) *Client {
+func NewClient(
+	cpuTimeRecordStream tipb.TopSQLAgent_ReportCPUTimeRecordsClient,
+	sqlMetaStream tipb.TopSQLAgent_ReportSQLMetaClient,
+	planMetaStream tipb.TopSQLAgent_ReportPlanMetaClient,
+) *Client {
 	return &Client{
-		stream: stream,
+		cpuTimeRecordStream: cpuTimeRecordStream,
+		sqlMetaStream:       sqlMetaStream,
+		planMetaStream:      planMetaStream,
 	}
 }
 
@@ -48,16 +56,42 @@ func (s *Client) Start() {
 		reqBatch = append(reqBatch, req)
 	}
 
-	s.sendBatch(reqBatch)
+	s.sendCPUTimeRecordBatch(reqBatch)
 }
 
-func (s *Client) sendBatch(batch []*tipb.CPUTimeRecord) {
+func (s *Client) sendCPUTimeRecordBatch(batch []*tipb.CPUTimeRecord) {
 	for _, req := range batch {
-		if err := s.stream.Send(req); err != nil {
+		if err := s.cpuTimeRecordStream.Send(req); err != nil {
 			log.Fatalf("send stream request failed: %v", err)
 		}
 	}
-	resp, err := s.stream.CloseAndRecv()
+	resp, err := s.cpuTimeRecordStream.CloseAndRecv()
+	if err != nil {
+		log.Fatalf("receive stream response failed: %v", err)
+	}
+	log.Printf("received stream response: %v", resp)
+}
+
+func (s *Client) sendSQLMetaBatch(batch []*tipb.SQLMeta) {
+	for _, req := range batch {
+		if err := s.sqlMetaStream.Send(req); err != nil {
+			log.Fatalf("send stream request failed: %v", err)
+		}
+	}
+	resp, err := s.sqlMetaStream.CloseAndRecv()
+	if err != nil {
+		log.Fatalf("receive stream response failed: %v", err)
+	}
+	log.Printf("received stream response: %v", resp)
+}
+
+func (s *Client) sendPlanMetaBatch(batch []*tipb.PlanMeta) {
+	for _, req := range batch {
+		if err := s.planMetaStream.Send(req); err != nil {
+			log.Fatalf("send stream request failed: %v", err)
+		}
+	}
+	resp, err := s.planMetaStream.CloseAndRecv()
 	if err != nil {
 		log.Fatalf("receive stream response failed: %v", err)
 	}
@@ -72,12 +106,24 @@ func newGrpcClient(ctx context.Context, addr string) (*grpc.ClientConn, *Client)
 		log.Fatalf("connecting server failed: %v", err)
 	}
 	grpcClient := tipb.NewTopSQLAgentClient(conn)
-	stream, err := grpcClient.ReportCPUTimeRecords(ctx)
+	cpuTimeRecordStream, err := grpcClient.ReportCPUTimeRecords(ctx)
 	if err != nil {
-		log.Fatalf("open stream failed: %v", err)
+		log.Fatalf("open cpu time record stream failed: %v", err)
+	}
+	sqlMetaStream, err := grpcClient.ReportSQLMeta(ctx)
+	if err != nil {
+		log.Fatalf("open cpu time record stream failed: %v", err)
+	}
+	planMetaStream, err := grpcClient.ReportPlanMeta(ctx)
+	if err != nil {
+		log.Fatalf("open cpu time record stream failed: %v", err)
 	}
 
-	tidbSender := NewClient(stream)
+	tidbSender := NewClient(
+		cpuTimeRecordStream,
+		sqlMetaStream,
+		planMetaStream,
+	)
 	return conn, tidbSender
 }
 

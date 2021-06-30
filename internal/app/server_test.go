@@ -30,6 +30,8 @@ func TestSendData(t *testing.T) {
 	server := StartGrpcServer(addr)
 	conn, client := newGrpcClient(context.TODO(), addr)
 	defer conn.Close()
+
+	// CPU time record
 	var cpuTimeRecordBatch []*tipb.CPUTimeRecord
 	count := 1000
 	for i := 0; i < count; i++ {
@@ -42,12 +44,50 @@ func TestSendData(t *testing.T) {
 			},
 		)
 	}
-	client.sendBatch(cpuTimeRecordBatch)
+	client.sendCPUTimeRecordBatch(cpuTimeRecordBatch)
 	// wait sender to send out the record
 	time.Sleep(10 * time.Millisecond)
 	cpuTimeRecordList := server.sender.store.(*MemStore).cpuTimeRecordList
 	assert.Equal(t, count, len(cpuTimeRecordList))
 	for i := 0; i < count; i++ {
 		assert.Equal(t, *cpuTimeRecordBatch[i], *cpuTimeRecordList[i])
+	}
+
+	// SQL meta
+	var sqlMetaBatch []*tipb.SQLMeta
+	count = 100
+	for i := 0; i < count; i++ {
+		sqlMetaBatch = append(sqlMetaBatch,
+			&tipb.SQLMeta{
+				SqlDigest:     []byte("SQLDigest"),
+				NormalizedSql: "NormalizedSQL",
+			},
+		)
+	}
+	client.sendSQLMetaBatch(sqlMetaBatch)
+	time.Sleep(10 * time.Millisecond)
+	sqlMetaList := server.sender.store.(*MemStore).sqlMetaList
+	assert.Equal(t, count, len(sqlMetaList))
+	for i := 0; i < count; i++ {
+		assert.Equal(t, *sqlMetaBatch[i], *sqlMetaList[i])
+	}
+
+	// Plan meat
+	var planMetaBatch []*tipb.PlanMeta
+	count = 100
+	for i := 0; i < count; i++ {
+		planMetaBatch = append(planMetaBatch,
+			&tipb.PlanMeta{
+				PlanDigest:     []byte("PlanDigest"),
+				NormalizedPlan: "NormalizedPlan",
+			},
+		)
+	}
+	client.sendPlanMetaBatch(planMetaBatch)
+	time.Sleep(10 * time.Millisecond)
+	planMetaList := server.sender.store.(*MemStore).planMetaList
+	assert.Equal(t, count, len(planMetaList))
+	for i := 0; i < count; i++ {
+		assert.Equal(t, *planMetaBatch[i], *planMetaList[i])
 	}
 }

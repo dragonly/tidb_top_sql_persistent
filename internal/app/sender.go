@@ -30,7 +30,7 @@ type Store interface {
 type MemStore struct {
 	cpuTimeRecordList []*tipb.CPUTimeRecord
 	sqlMetaList       []*tipb.SQLMeta
-	planMeta          []*tipb.PlanMeta
+	planMetaList      []*tipb.PlanMeta
 }
 
 func NewMemStore() *MemStore {
@@ -46,7 +46,7 @@ func (s *MemStore) WriteSQLMeta(meta *tipb.SQLMeta) {
 }
 
 func (s *MemStore) WritePlanMeta(meta *tipb.PlanMeta) {
-	s.planMeta = append(s.planMeta, meta)
+	s.planMetaList = append(s.planMetaList, meta)
 }
 
 type Sender struct {
@@ -62,22 +62,35 @@ func NewSender(prefetcher *Prefetcher, store Store) *Sender {
 }
 
 func (s *Sender) start() {
-	// TODO: wait for a channel or timer
-	for {
-		s.sendNext()
-	}
+	// TODO: send batch
+	go func() {
+		for {
+			s.sendNextCPUTimeRecord()
+		}
+	}()
+	go func() {
+		for {
+			s.sendNextSQLMeta()
+		}
+	}()
+	go func() {
+		for {
+			s.sendNextPlanMeta()
+		}
+	}()
 }
 
-// sendNext sends the next batch of records from WAL
-func (s *Sender) sendNext() {
-	// TODO: send batch
-	if record := s.prefetcher.ReadOneCPUTimeRecordOrNil(); record != nil {
-		s.store.WriteCPUTimeRecord(record)
-	}
-	if sqlMeta := s.prefetcher.ReadOneSQLMetaOrNil(); sqlMeta != nil {
-		s.store.WriteSQLMeta(sqlMeta)
-	}
-	if planMeta := s.prefetcher.ReadOnePlanMetaOrNil(); planMeta != nil {
-		s.store.WritePlanMeta(planMeta)
-	}
+func (s *Sender) sendNextCPUTimeRecord() {
+	record := s.prefetcher.ReadOneCPUTimeRecord()
+	s.store.WriteCPUTimeRecord(record)
+}
+
+func (s *Sender) sendNextSQLMeta() {
+	meta := s.prefetcher.ReadOneSQLMetaOrNil()
+	s.store.WriteSQLMeta(meta)
+}
+
+func (s *Sender) sendNextPlanMeta() {
+	meta := s.prefetcher.ReadOnePlanMetaOrNil()
+	s.store.WritePlanMeta(meta)
 }
