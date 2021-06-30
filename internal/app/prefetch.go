@@ -31,15 +31,21 @@ type Prefetcher struct {
 	buf prefetchBuffer
 }
 
+type PrefetcherConfig struct {
+	CPUTimeRecordCount uint32
+	SQLMetaCount       uint32
+	PlanMetaCount      uint32
+}
+
 // TODO: load from WAL
 // Currently we write prefetch buffer directly from the receiver.
-func NewPrefetcher(wal WAL, capacity uint32) *Prefetcher {
+func NewPrefetcher(wal WAL, config PrefetcherConfig) *Prefetcher {
 	return &Prefetcher{
 		wal: wal,
 		buf: prefetchBuffer{
-			cpuTimeRecordChan: make(chan *tipb.CPUTimeRecord, 1000),
-			sqlMetaChan:       make(chan *tipb.SQLMeta, 100),
-			planMetaChan:      make(chan *tipb.PlanMeta, 100),
+			cpuTimeRecordChan: make(chan *tipb.CPUTimeRecord, config.CPUTimeRecordCount),
+			sqlMetaChan:       make(chan *tipb.SQLMeta, config.SQLMetaCount),
+			planMetaChan:      make(chan *tipb.PlanMeta, config.PlanMetaCount),
 		},
 	}
 }

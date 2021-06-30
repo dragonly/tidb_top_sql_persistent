@@ -49,7 +49,11 @@ type TopSQLAgentServer struct {
 }
 
 func NewAgentServer(wal WAL, store Store) *TopSQLAgentServer {
-	prefetcher := NewPrefetcher(wal, 10*1024*1024)
+	prefetcher := NewPrefetcher(wal, PrefetcherConfig{
+		CPUTimeRecordCount: 1000,
+		SQLMetaCount:       100,
+		PlanMetaCount:      100,
+	})
 	receiver := NewReceiver(wal, prefetcher)
 	sender := NewSender(prefetcher, store)
 	return &TopSQLAgentServer{
