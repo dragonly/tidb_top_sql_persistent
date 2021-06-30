@@ -18,21 +18,12 @@ package app
 
 import (
 	"context"
-	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 )
-
-type CPUTimeRecordSortByFirst []*tipb.CPUTimeRecord
-
-func (a CPUTimeRecordSortByFirst) Len() int      { return len(a) }
-func (a CPUTimeRecordSortByFirst) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a CPUTimeRecordSortByFirst) Less(i, j int) bool {
-	return a[i].TimestampList[0] < a[j].TimestampList[0]
-}
 
 func TestSendData(t *testing.T) {
 	addr := "localhost:23333"
@@ -55,7 +46,6 @@ func TestSendData(t *testing.T) {
 	// wait sender to send out the record
 	time.Sleep(10 * time.Millisecond)
 	cpuTimeRecordList := server.sender.store.(*MemStore).cpuTimeRecordList
-	sort.Sort(CPUTimeRecordSortByFirst(cpuTimeRecordList))
 	assert.Equal(t, count, len(cpuTimeRecordList))
 	for i := 0; i < count; i++ {
 		assert.Equal(t, *cpuTimeRecordBatch[i], *cpuTimeRecordList[i])
