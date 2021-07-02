@@ -12,22 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: all proto
-
-all: proto test bench
-
-proto: go-proto rust-proto
-
-go-proto:
-	@echo "generating go protobuf files"
-	protoc -I internal/app/protobuf --go_out=. --go-grpc_out=. internal/app/protobuf/agent.proto
-	@echo ""
-
-rust-proto:
-	@echo "generating rust protobuf files"
-	cd rust && cargo check
-	@echo ""
-
 test:
 	@echo "running unit test"
 	go test -v ./...
@@ -49,3 +33,7 @@ server:
 client:
 	@echo "running demo client"
 	go run main.go client
+
+docker:
+	@echo "building docker image"
+	docker build . -t topsql-agent
