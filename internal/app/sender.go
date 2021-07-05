@@ -16,39 +16,6 @@ limitations under the License.
 
 package app
 
-import (
-	"github.com/pingcap/tipb/go-tipb"
-)
-
-type Store interface {
-	WriteCPUTimeRecord(*tipb.CPUTimeRecord)
-	WriteSQLMeta(*tipb.SQLMeta)
-	WritePlanMeta(*tipb.PlanMeta)
-}
-
-// MemStore is for testing purpose
-type MemStore struct {
-	cpuTimeRecordList []*tipb.CPUTimeRecord
-	sqlMetaList       []*tipb.SQLMeta
-	planMetaList      []*tipb.PlanMeta
-}
-
-func NewMemStore() *MemStore {
-	return &MemStore{}
-}
-
-func (s *MemStore) WriteCPUTimeRecord(records *tipb.CPUTimeRecord) {
-	s.cpuTimeRecordList = append(s.cpuTimeRecordList, records)
-}
-
-func (s *MemStore) WriteSQLMeta(meta *tipb.SQLMeta) {
-	s.sqlMetaList = append(s.sqlMetaList, meta)
-}
-
-func (s *MemStore) WritePlanMeta(meta *tipb.PlanMeta) {
-	s.planMetaList = append(s.planMetaList, meta)
-}
-
 type Sender struct {
 	prefetcher *Prefetcher
 	store      Store
