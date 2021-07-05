@@ -18,6 +18,7 @@ package app
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 
@@ -58,16 +59,21 @@ func (s *MemStore) WritePlanMeta(meta *tipb.PlanMeta) error {
 
 // TiDBStore uses TiDB as the storage bakend
 type TiDBStore struct {
-	db *sql.DB
+	clusterID uint64
+	db        *sql.DB
 }
 
-func NewTiDBStore(dsn string) *TiDBStore {
+func NewTiDBStore(dsn string, clusterID uint64) *TiDBStore {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Fatalf("failed to open db: %v\n", err)
 	}
+	if err := db.Ping(); err != nil {
+		log.Fatalf("failed to ping db: %v\n", err)
+	}
 	return &TiDBStore{
-		db: db,
+		db:        db,
+		clusterID: clusterID,
 	}
 }
 
@@ -105,5 +111,52 @@ func (s *TiDBStore) WritePlanMeta(meta *tipb.PlanMeta) error {
 	if _, err := s.db.Exec(sqlStr, values...); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (s *TiDBStore) InitSchema() error {
+	// TODO(dragonly): partition table maintenance
+	cpuTimeTable := fmt.Sprintf("tidb%d_cpu_time", s.clusterID)
+	sqlMetaTable := fmt.Sprintf("tidb%d_sql_meta", s.clusterID)
+	planMetaTable := fmt.Sprintf("tidb%d_plan_meta", s.clusterID)
+	if _, err := s.db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		sql_digest VARBINARY(32) NOT NULL,
+		plan_digest VARBINARY(32),
+		timestamp INTEGER NOT NULL,
+		cpu_time_ms INTEGER NOT NULL,
+		instance_id VARCHAR(32) NOT NULL
+		);`, cpuTimeTable)); err != nil {
+		log.Printf("create table err: %v\n", err)
+		return err
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s SET TIFLASH REPLICA 1;", cpuTimeTable)); err != nil {
+		log.Printf("set tiflash replica err: %v\n", err)
+		return err
+	}
+
+	if _, err := s.db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER AUTO_RANDOM NOT NULL,
+		sql_digest VARBINARY(32) NOT NULL,
+		normalized_sql LONGTEXT NOT NULL,
+		PRIMARY KEY (id),
+		INDEX i_sql_digest (sql_digest),
+		UNIQUE (sql_digest)
+	);`, sqlMetaTable)); err != nil {
+		log.Printf("create table err: %v\n", err)
+		return err
+	}
+
+	if _, err := s.db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		id INTEGER AUTO_RANDOM NOT NULL,
+		plan_digest VARBINARY(32) NOT NULL,
+		normalized_plan LONGTEXT NOT NULL,
+		PRIMARY KEY (id),
+		INDEX i_plan_digest (plan_digest),
+		UNIQUE (plan_digest)
+	);`, planMetaTable)); err != nil {
+		log.Printf("create table err: %v\n", err)
+		return err
+	}
+
 	return nil
 }

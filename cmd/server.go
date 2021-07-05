@@ -17,11 +17,18 @@ limitations under the License.
 package cmd
 
 import (
+	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dragonly/tidb_topsql_agent/internal/app"
+)
+
+var (
+	storeType *string
 )
 
 // serverCmd represents the serve command
@@ -30,7 +37,23 @@ var serverCmd = &cobra.Command{
 	Short: "start agent server",
 	Long:  `This will start the gRPC server of the data collection agent.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		app.StartGrpcServer("")
+		var store app.Store
+		switch *storeType {
+		case "memstore":
+			store = app.NewMemStore()
+		case "tidb":
+			dsn := os.Getenv("TIDB_DSN")
+			clusterIDStr := os.Getenv("CLUSTER_ID")
+			clusterID, err := strconv.ParseUint(clusterIDStr, 10, 64)
+			if err != nil {
+				log.Fatalf("cannot convert CLUSTER_ID(%s) to integer", clusterIDStr)
+			}
+			log.Printf("TIDB_DSN: %s\n", dsn)
+			store = app.NewTiDBStore(dsn, clusterID)
+		default:
+			log.Fatalf("invalid store type: %v", *storeType)
+		}
+		app.StartGrpcServer("", store)
 		time.Sleep(time.Hour * 24 * 365)
 	},
 }
@@ -38,13 +61,5 @@ var serverCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(serverCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// serverCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// serverCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	storeType = serverCmd.Flags().String("store", "memstore", "select the store implementation, defaults to memstore for test purpose")
 }

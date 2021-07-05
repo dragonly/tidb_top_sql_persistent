@@ -112,7 +112,7 @@ func (as *TopSQLAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_Report
 	return nil
 }
 
-func StartGrpcServer(addr string) *TopSQLAgentServer {
+func StartGrpcServer(addr string, store Store) *TopSQLAgentServer {
 	if len(addr) == 0 {
 		addr = ":23333"
 	}
@@ -122,7 +122,6 @@ func StartGrpcServer(addr string) *TopSQLAgentServer {
 	}
 	server := grpc.NewServer()
 	wal := NewMemWAL()
-	store := NewMemStore()
 	agentServer := NewAgentServer(wal, store)
 	agentServer.Start()
 	tipb.RegisterTopSQLAgentServer(server, agentServer)

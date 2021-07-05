@@ -27,7 +27,8 @@ import (
 
 func TestSendData(t *testing.T) {
 	addr := "localhost:23333"
-	server := StartGrpcServer(addr)
+	store := NewMemStore()
+	server := StartGrpcServer(addr, store)
 	conn, client := newGrpcClient(context.TODO(), addr)
 	defer conn.Close()
 
