@@ -49,7 +49,7 @@ func (s *Sender) start() {
 
 func (s *Sender) sendNextCPUTimeRecord() {
 	record := s.prefetcher.ReadOneCPUTimeRecord()
-	s.store.WriteCPUTimeRecord(record)
+	s.store.WriteCPUTimeRecord(record, "instance_id")
 }
 
 func (s *Sender) sendNextSQLMeta() {

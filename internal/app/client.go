@@ -48,10 +48,10 @@ func (s *Client) Start() {
 	var reqBatch []*tipb.CPUTimeRecord
 	for i := 0; i < 10; i++ {
 		req := &tipb.CPUTimeRecord{
-			SqlDigest:     []byte("SQLDigest"),
-			PlanDigest:    []byte("PlanDigest"),
-			TimestampList: []uint64{uint64(i)},
-			CpuTimeMsList: []uint32{uint32(i * 100)},
+			SqlDigest:              []byte("SQLDigest"),
+			PlanDigest:             []byte("PlanDigest"),
+			RecordListTimestampSec: []uint64{uint64(i)},
+			RecordListCpuTimeMs:    []uint32{uint32(i * 100)},
 		}
 		reqBatch = append(reqBatch, req)
 	}

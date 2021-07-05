@@ -37,10 +37,10 @@ func TestSendData(t *testing.T) {
 	for i := 0; i < count; i++ {
 		cpuTimeRecordBatch = append(cpuTimeRecordBatch,
 			&tipb.CPUTimeRecord{
-				SqlDigest:     []byte("SQLDigest"),
-				PlanDigest:    []byte("PlanDigest"),
-				TimestampList: []uint64{uint64(i)},
-				CpuTimeMsList: []uint32{uint32(i)},
+				SqlDigest:              []byte("SQLDigest"),
+				PlanDigest:             []byte("PlanDigest"),
+				RecordListTimestampSec: []uint64{uint64(i)},
+				RecordListCpuTimeMs:    []uint32{uint32(i)},
 			},
 		)
 	}

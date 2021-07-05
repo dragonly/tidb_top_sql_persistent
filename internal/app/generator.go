@@ -59,10 +59,10 @@ func GenerateCPUTimeRecords(recordChan chan *tipb.CPUTimeRecord) {
 					cpuTimeList = append(cpuTimeList, rand.Uint32()%1000)
 				}
 				recordChan <- &tipb.CPUTimeRecord{
-					SqlDigest:     []byte(fmt.Sprintf("i%d_sql%d", i, j)),
-					PlanDigest:    []byte(fmt.Sprintf("i%d_plan%d", i, j)),
-					TimestampList: tsList,
-					CpuTimeMsList: cpuTimeList,
+					SqlDigest:              []byte(fmt.Sprintf("i%d_sql%d", i, j)),
+					PlanDigest:             []byte(fmt.Sprintf("i%d_plan%d", i, j)),
+					RecordListTimestampSec: tsList,
+					RecordListCpuTimeMs:    cpuTimeList,
 				}
 				count++
 				if count%100 == 0 {
@@ -149,8 +149,8 @@ func writeCPUTimeRecordsInfluxDB(writeAPI api.WriteAPIBlocking, recordsChan chan
 	for {
 		records := <-recordsChan
 		var points []*write.Point
-		for i, ts := range records.TimestampList {
-			cpuTimeMs := records.CpuTimeMsList[i]
+		for i, ts := range records.RecordListTimestampSec {
+			cpuTimeMs := records.RecordListCpuTimeMs[i]
 			sep := strings.Split(string(records.SqlDigest), "_")
 			instanceID := sep[0][1:]
 			p := influxdb.NewPoint("cpu_time",
@@ -260,9 +260,9 @@ func writeCPUTimeRecordsTiDB(recordsChan chan *tipb.CPUTimeRecord, dsn string) {
 
 	for {
 		records := <-recordsChan
-		values := make([]interface{}, 0, len(records.TimestampList)*4)
-		for i, ts := range records.TimestampList {
-			cpuTimeMs := records.CpuTimeMsList[i]
+		values := make([]interface{}, 0, len(records.RecordListTimestampSec)*5)
+		for i, ts := range records.RecordListTimestampSec {
+			cpuTimeMs := records.RecordListCpuTimeMs[i]
 			// var instance_id, sql_id int
 			// _, err := fmt.Sscanf(string(records.SqlDigest), "i%d_sql%d", &instance_id, &sql_id)
 			// if err != nil {
