@@ -29,6 +29,7 @@ import (
 
 var (
 	storeType *string
+	address   *string
 )
 
 // serverCmd represents the serve command
@@ -56,7 +57,7 @@ var serverCmd = &cobra.Command{
 		default:
 			log.Fatalf("invalid store type: %v", *storeType)
 		}
-		app.StartGrpcServer("", store)
+		app.StartGrpcServer(*address, store)
 		time.Sleep(time.Hour * 24 * 365)
 	},
 }
@@ -65,4 +66,5 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 
 	storeType = serverCmd.Flags().String("store", "memstore", "select the store implementation, defaults to memstore for test purpose")
+	address = serverCmd.Flags().String("address", ":23333", "specify the gRPC server listening address")
 }
