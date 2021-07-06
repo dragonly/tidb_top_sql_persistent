@@ -63,10 +63,11 @@ func NewAgentServer(wal WAL, store Store) *TopSQLAgentServer {
 }
 
 func (as *TopSQLAgentServer) Start() {
-	go as.sender.start()
+	go as.sender.Start()
 }
 
 func (as *TopSQLAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
+	log.Println("server: ReportPlanMeta")
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -82,6 +83,7 @@ func (as *TopSQLAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMe
 }
 
 func (as *TopSQLAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
+	log.Println("server: ReportSQLMeta")
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {

@@ -29,6 +29,7 @@ type Store interface {
 	WriteCPUTimeRecord(record *tipb.CPUTimeRecord, instanceID string) error
 	WriteSQLMeta(*tipb.SQLMeta) error
 	WritePlanMeta(*tipb.PlanMeta) error
+	InitSchema() error
 }
 
 // MemStore is for testing purpose
@@ -57,6 +58,10 @@ func (s *MemStore) WritePlanMeta(meta *tipb.PlanMeta) error {
 	return nil
 }
 
+func (s *MemStore) InitSchema() error {
+	return nil
+}
+
 // TiDBStore uses TiDB as the storage bakend
 type TiDBStore struct {
 	clusterID uint64
@@ -79,7 +84,8 @@ func NewTiDBStore(dsn string, clusterID uint64) *TiDBStore {
 
 func (s *TiDBStore) WriteCPUTimeRecord(record *tipb.CPUTimeRecord, instanceID string) error {
 	var sqlBuf strings.Builder
-	sqlBuf.WriteString("INSERT INTO cpu_time (sql_digest, plan_digest, timestamp, cpu_time_ms, instance_id) VALUES ")
+	cpuTimeTable := fmt.Sprintf("tidb%d_cpu_time", s.clusterID)
+	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO %s (sql_digest, plan_digest, timestamp, cpu_time_ms, instance_id) VALUES ", cpuTimeTable))
 	for i := 0; i < len(record.RecordListTimestampSec)-1; i++ {
 		sqlBuf.WriteString("(?, ?, ?, ?, ?),")
 	}
@@ -97,7 +103,8 @@ func (s *TiDBStore) WriteCPUTimeRecord(record *tipb.CPUTimeRecord, instanceID st
 }
 
 func (s *TiDBStore) WriteSQLMeta(meta *tipb.SQLMeta) error {
-	sqlStr := "INSERT INTO sql_meta (sql_digest, normalized_sql) VALUES (?, ?)"
+	sqlMetaTable := fmt.Sprintf("tidb%d_sql_meta", s.clusterID)
+	sqlStr := fmt.Sprintf("INSERT INTO %s (sql_digest, normalized_sql) VALUES (?, ?)", sqlMetaTable)
 	values := []interface{}{meta.SqlDigest, meta.NormalizedSql}
 	if _, err := s.db.Exec(sqlStr, values...); err != nil {
 		return err
@@ -106,7 +113,8 @@ func (s *TiDBStore) WriteSQLMeta(meta *tipb.SQLMeta) error {
 }
 
 func (s *TiDBStore) WritePlanMeta(meta *tipb.PlanMeta) error {
-	sqlStr := "INSERT INTO plan_meta (plan_digest, normalized_plan) VALUES (?, ?)"
+	planMetaTable := fmt.Sprintf("tidb%d_plan_meta", s.clusterID)
+	sqlStr := fmt.Sprintf("INSERT INTO %s (plan_digest, normalized_plan) VALUES (?, ?)", planMetaTable)
 	values := []interface{}{meta.PlanDigest, meta.NormalizedPlan}
 	if _, err := s.db.Exec(sqlStr, values...); err != nil {
 		return err
@@ -135,7 +143,7 @@ func (s *TiDBStore) InitSchema() error {
 	}
 
 	if _, err := s.db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id INTEGER AUTO_RANDOM NOT NULL,
+		id BIGINT AUTO_RANDOM NOT NULL,
 		sql_digest VARBINARY(32) NOT NULL,
 		normalized_sql LONGTEXT NOT NULL,
 		PRIMARY KEY (id),
@@ -147,7 +155,7 @@ func (s *TiDBStore) InitSchema() error {
 	}
 
 	if _, err := s.db.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id INTEGER AUTO_RANDOM NOT NULL,
+		id BIGINT AUTO_RANDOM NOT NULL,
 		plan_digest VARBINARY(32) NOT NULL,
 		normalized_plan LONGTEXT NOT NULL,
 		PRIMARY KEY (id),

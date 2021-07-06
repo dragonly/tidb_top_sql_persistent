@@ -16,6 +16,8 @@ limitations under the License.
 
 package app
 
+import "log"
+
 type Sender struct {
 	prefetcher *Prefetcher
 	store      Store
@@ -28,8 +30,8 @@ func NewSender(prefetcher *Prefetcher, store Store) *Sender {
 	}
 }
 
-func (s *Sender) start() {
-	// TODO: send batch
+func (s *Sender) Start() {
+	// TODO: send in batch
 	go func() {
 		for {
 			s.sendNextCPUTimeRecord()
@@ -49,15 +51,21 @@ func (s *Sender) start() {
 
 func (s *Sender) sendNextCPUTimeRecord() {
 	record := s.prefetcher.ReadOneCPUTimeRecord()
-	s.store.WriteCPUTimeRecord(record, "instance_id")
+	if err := s.store.WriteCPUTimeRecord(record, "fake_instance_id"); err != nil {
+		log.Printf("executing sql failed: %v\n", err)
+	}
 }
 
 func (s *Sender) sendNextSQLMeta() {
 	meta := s.prefetcher.ReadOneSQLMetaOrNil()
-	s.store.WriteSQLMeta(meta)
+	if err := s.store.WriteSQLMeta(meta); err != nil {
+		log.Printf("executing sql failed: %v\n", err)
+	}
 }
 
 func (s *Sender) sendNextPlanMeta() {
 	meta := s.prefetcher.ReadOnePlanMetaOrNil()
-	s.store.WritePlanMeta(meta)
+	if err := s.store.WritePlanMeta(meta); err != nil {
+		log.Printf("executing sql failed: %v\n", err)
+	}
 }

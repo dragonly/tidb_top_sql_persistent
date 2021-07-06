@@ -46,10 +46,13 @@ var serverCmd = &cobra.Command{
 			clusterIDStr := os.Getenv("CLUSTER_ID")
 			clusterID, err := strconv.ParseUint(clusterIDStr, 10, 64)
 			if err != nil {
-				log.Fatalf("cannot convert CLUSTER_ID(%s) to integer", clusterIDStr)
+				log.Fatalf("cannot convert CLUSTER_ID(\"%s\") to integer", clusterIDStr)
 			}
-			log.Printf("TIDB_DSN: %s\n", dsn)
+			log.Printf("TIDB_DSN: \"%s\"\n", dsn)
 			store = app.NewTiDBStore(dsn, clusterID)
+			if err := store.InitSchema(); err != nil {
+				log.Fatalf("initialize TiDB schema failed: %v", err)
+			}
 		default:
 			log.Fatalf("invalid store type: %v", *storeType)
 		}
